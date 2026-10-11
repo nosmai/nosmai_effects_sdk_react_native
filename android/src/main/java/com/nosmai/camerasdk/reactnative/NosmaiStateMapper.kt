@@ -4,6 +4,7 @@ import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import com.nosmai.effect.NosmaiEffects
+import com.nosmai.effect.api.NosmaiBeauty
 import com.nosmai.effect.NosmaiEffectsEngine
 import com.nosmai.effect.NosmaiFilterInfo
 import com.nosmai.effect.NosmaiPipelineState
@@ -49,10 +50,21 @@ internal object NosmaiStateMapper {
       "hasBeautyEffect",
       activeEffectInfo?.type == NosmaiFilterInfo.Type.BEAUTY_EFFECT
     )
+    val hairColorActive =
+      runCatching { NosmaiBeauty.isHairColoringEnabled() }.getOrDefault(false)
     map.putBoolean(
       "hasBuiltInBeauty",
       runCatching { NosmaiEffectsEngine.hasActiveBeautyFilters() }
-        .getOrDefault(false)
+        .getOrDefault(false) || hairColorActive
+    )
+    // Hair colouring is built-in beauty (never the AR slot); surfaced on its
+    // own so a host can keep a shade picker in sync.
+    map.putBoolean("isHairColorActive", hairColorActive)
+    // A sticker occupies the AR slot while activeEffectPath stays null, so the
+    // slot cannot be judged from the path alone.
+    map.putBoolean(
+      "isFaceStickerActive",
+      runCatching { NosmaiEffects.isFaceStickerActive() }.getOrDefault(false)
     )
     map.putBoolean("hasManualBackground", state?.activeBackgroundConfig != null)
     map.putBoolean(

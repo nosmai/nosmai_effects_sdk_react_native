@@ -48,6 +48,11 @@ internal class NosmaiAndroidVisualEffects(
   private var skinSmoothing = 0f
   private var skinWhitening = 0f
   private var teethWhitening = 0f
+  private var freckles = 0f
+  private var darkCircle = 0f
+  private var foundation = 0f
+  private var contour = 0f
+  private var highlighter = 0f
   private var sharpening = 0f
 
   private var brightness = 0f
@@ -84,6 +89,14 @@ internal class NosmaiAndroidVisualEffects(
         NosmaiBeauty.applyTeethWhitening(normalized)
         teethWhitening = normalized
       }
+      "freckles" -> {
+        NosmaiBeauty.applyFreckles(normalized)
+        freckles = normalized
+      }
+      "darkCircle" -> {
+        NosmaiBeauty.applyDarkCircleCorrector(normalized)
+        darkCircle = normalized
+      }
       // Accepted for native callers even though the current JS facade routes
       // sharpening through setColorAdjustment.
       "sharpening" -> {
@@ -91,25 +104,134 @@ internal class NosmaiAndroidVisualEffects(
         sharpening = normalized
       }
       else -> invalidArgument(
-        "control must be skinSmoothing, skinWhitening, sharpening, or teethWhitening"
+        "control must be skinSmoothing, skinWhitening, sharpening, teethWhitening, freckles, or darkCircle"
       )
     }
   }
 
-  /** Clears skin beauty plus makeup, reshape, and eye lens without color/background/packages. */
+  /** Clears skin, complexion, makeup, reshape, eye lens, and hair without color/background/packages. */
   fun clearBeauty() {
     requireMainThread()
     if (!isNeutral(skinSmoothing)) NosmaiBeauty.applySkinSmoothing(0f)
     if (!isNeutral(skinWhitening)) NosmaiBeauty.applySkinWhitening(0f)
     if (!isNeutral(teethWhitening)) NosmaiBeauty.applyTeethWhitening(0f)
+    NosmaiBeauty.applyFreckles(0f)
+    NosmaiBeauty.applyDarkCircleCorrector(0f)
+    NosmaiBeauty.removeFoundation()
+    NosmaiBeauty.applyContourHighlighter(0f, 0f)
     NosmaiBeauty.removeMakeup(NosmaiBeauty.MAKEUP_ALL)
     NosmaiBeauty.clearReshapes()
     NosmaiBeauty.removeEyeLens()
+    NosmaiBeauty.setHairColoringEnabled(false)
     skinSmoothing = 0f
     skinWhitening = 0f
     teethWhitening = 0f
+    freckles = 0f
+    darkCircle = 0f
+    foundation = 0f
+    contour = 0f
+    highlighter = 0f
     reshapeValues.fill(0f)
   }
+
+  fun setBeautyVisible(visible: Boolean) {
+    requireMainThread()
+    NosmaiBeauty.setBeautyVisible(visible)
+  }
+  fun isBeautyVisible(): Boolean {
+    requireMainThread()
+    return NosmaiBeauty.isBeautyVisible()
+  }
+
+  fun applyContourHighlighter(shadow: Double, glow: Double) {
+    requireMainThread()
+    val c = requireRange(shadow, "contour", 0.0, 2.0).toFloat()
+    val h = requireRange(glow, "highlighter", 0.0, 2.0).toFloat()
+    NosmaiBeauty.applyContourHighlighter(c, h)
+    contour = c
+    highlighter = h
+  }
+
+  fun applyFoundation(coverage: Double, red: Double, green: Double, blue: Double) {
+    requireMainThread()
+    val amount = requireRange(coverage, "coverage", 0.0, 1.0).toFloat()
+    if (amount == 0f) NosmaiBeauty.removeFoundation()
+    else NosmaiBeauty.applyFoundation(amount, requireRange(red, "red", 0.0, 1.0).toFloat(), requireRange(green, "green", 0.0, 1.0).toFloat(), requireRange(blue, "blue", 0.0, 1.0).toFloat())
+    foundation = amount
+  }
+
+  fun applyMakeupDefault(makeupType: String, style: String, intensity: Double) {
+    requireMainThread()
+    val spec = makeupSpec(makeupType)
+    val id = spec.styleIds[style] ?: invalidArgument("style is not supported for $makeupType")
+    val strength = requireRange(intensity, "intensity", 0.0, makeupMaximum(makeupType)).toFloat()
+    if (makeupType == "lipstick") {
+      NosmaiBeauty.applyLipstickStyle(id)
+      NosmaiBeauty.setMakeupIntensity(spec.category, strength)
+      return
+    }
+    val defaults = when (makeupType) {
+      "eyeshadow" -> arrayOf(floatArrayOf(43f/255f,28f/255f,15f/255f), floatArrayOf(.65f,.45f,.25f), floatArrayOf(.38f,.30f,.25f))
+      "blusher" -> arrayOf(floatArrayOf(1f,169f/255f,153f/255f), floatArrayOf(157f/255f,63f/255f,37f/255f), floatArrayOf(198f/255f,114f/255f,124f/255f))
+      "eyebrow" -> arrayOf(floatArrayOf(.35f,.25f,.20f), floatArrayOf(.20f,.15f,.12f), floatArrayOf(.30f,.20f,.15f))
+      else -> arrayOf(floatArrayOf(0f,0f,0f))
+    }
+    val rgb = defaults[id.coerceIn(0, defaults.lastIndex)]
+    applyMakeup(makeupType, style, rgb[0].toDouble(), rgb[1].toDouble(), rgb[2].toDouble(), intensity)
+  }
+
+  fun getMakeupColors(makeupType: String): Map<String, Any> {
+    requireMainThread()
+    makeupSpec(makeupType)
+    val colours = when (makeupType) {
+      "lipstick" -> listOf(
+        makeupColor("Red", 0.78, 0.025, 0.035),
+        makeupColor("Pink", 0.94, 0.58, 0.66),
+        makeupColor("Nude", 0.96, 0.74, 0.66),
+        makeupColor("Berry", 0.78, 0.36, 0.48),
+        makeupColor("Coral", 0.96, 0.58, 0.46),
+        makeupColor("Wine", 0.66, 0.28, 0.36),
+        makeupColor("Rose", 0.88, 0.50, 0.54),
+        makeupColor("Brick", 0.82, 0.42, 0.36),
+        makeupColor("Mauve", 0.78, 0.46, 0.52),
+        makeupColor("Plum", 0.62, 0.34, 0.46)
+      )
+      "eyeshadow" -> listOf(
+        makeupColor("Smokey Black", 0.20, 0.15, 0.15),
+        makeupColor("Bronze", 0.60, 0.45, 0.35),
+        makeupColor("Gold", 0.80, 0.65, 0.50),
+        makeupColor("Plum", 0.50, 0.35, 0.45),
+        makeupColor("Teal", 0.40, 0.50, 0.55),
+        makeupColor("Mauve", 0.70, 0.55, 0.60),
+        makeupColor("Copper", 0.55, 0.40, 0.30),
+        makeupColor("Purple", 0.35, 0.25, 0.40)
+      )
+      "blusher" -> listOf(
+        makeupColor("Peach", 0.95, 0.60, 0.60),
+        makeupColor("Rose", 0.90, 0.50, 0.55),
+        makeupColor("Coral", 0.85, 0.55, 0.45),
+        makeupColor("Berry", 0.75, 0.45, 0.50),
+        makeupColor("Apricot", 0.92, 0.70, 0.65),
+        makeupColor("Raspberry", 0.80, 0.40, 0.45)
+      )
+      "eyebrow" -> listOf(
+        makeupColor("Black", 0.15, 0.10, 0.08),
+        makeupColor("Dark Brown", 0.35, 0.25, 0.20),
+        makeupColor("Medium Brown", 0.50, 0.35, 0.25),
+        makeupColor("Light Brown", 0.65, 0.50, 0.35),
+        makeupColor("Auburn", 0.45, 0.30, 0.25),
+        makeupColor("Charcoal", 0.30, 0.25, 0.25)
+      )
+      else -> emptyList()
+    }
+    return mapOf("colors" to colours)
+  }
+
+  private fun makeupColor(name: String, red: Double, green: Double, blue: Double) =
+    mapOf("name" to name, "red" to red, "green" to green, "blue" to blue)
+
+  private fun makeupMaximum(type: String): Double =
+    if (type == "lipstick" || type == "blusher") 2.0 else 1.0
 
   fun applyMakeup(
     makeupType: String,
@@ -126,7 +248,7 @@ internal class NosmaiAndroidVisualEffects(
     val r = requireRange(red, "red", 0.0, 1.0).toFloat()
     val g = requireRange(green, "green", 0.0, 1.0).toFloat()
     val b = requireRange(blue, "blue", 0.0, 1.0).toFloat()
-    val level = requireRange(intensity, "intensity", 0.0, 1.0).toFloat()
+    val level = requireRange(intensity, "intensity", 0.0, makeupMaximum(makeupType)).toFloat()
 
     when (makeupType) {
       "lipstick" -> NosmaiBeauty.applyLipstickStyle(styleId, r, g, b)
@@ -149,7 +271,7 @@ internal class NosmaiAndroidVisualEffects(
     }
     NosmaiBeauty.setMakeupIntensity(
       makeup.category,
-      requireRange(intensity, "intensity", 0.0, 1.0).toFloat()
+      requireRange(intensity, "intensity", 0.0, makeupMaximum(makeupType)).toFloat()
     )
   }
 
@@ -223,6 +345,44 @@ internal class NosmaiAndroidVisualEffects(
     return NosmaiBeauty.isEyeLensActive()
   }
 
+  fun setHairColor(
+    red: Double,
+    green: Double,
+    blue: Double,
+    intensity: Double
+  ) {
+    requireMainThread()
+    val r = requireRange(red, "red", 0.0, 1.0).toFloat()
+    val g = requireRange(green, "green", 0.0, 1.0).toFloat()
+    val b = requireRange(blue, "blue", 0.0, 1.0).toFloat()
+    val strength = requireRange(intensity, "intensity", 0.0, 1.0).toFloat()
+    // The hair model is built lazily on the SDK's own worker; enabling never
+    // blocks this (main) thread.
+    NosmaiBeauty.setHairColoringEnabled(true)
+    NosmaiBeauty.setHairColor(r, g, b)
+    NosmaiBeauty.setHairColorIntensity(strength)
+  }
+
+  fun setHairColorIntensity(intensity: Double) {
+    requireMainThread()
+    if (!NosmaiBeauty.isHairColoringEnabled()) {
+      throw NosmaiVisualException(ERROR_INVALID_STATE, "Hair color is not active")
+    }
+    NosmaiBeauty.setHairColorIntensity(
+      requireRange(intensity, "intensity", 0.0, 1.0).toFloat()
+    )
+  }
+
+  fun removeHairColor() {
+    requireMainThread()
+    NosmaiBeauty.setHairColoringEnabled(false)
+  }
+
+  fun isHairColorActive(): Boolean {
+    requireMainThread()
+    return NosmaiBeauty.isHairColoringEnabled()
+  }
+
   fun setColorAdjustment(
     control: String,
     value1: Double,
@@ -240,7 +400,7 @@ internal class NosmaiAndroidVisualEffects(
         NosmaiBeauty.applyBrightness(brightness)
       }
       "contrast" -> {
-        contrast = requireRange(value1, "value1", 0.0, 2.0).toFloat()
+        contrast = requireRange(value1, "value1", 0.0, 4.0).toFloat()
         NosmaiBeauty.applyContrast(contrast)
       }
       "rgb" -> {
@@ -451,6 +611,11 @@ internal class NosmaiAndroidVisualEffects(
     skinSmoothing = 0f
     skinWhitening = 0f
     teethWhitening = 0f
+    freckles = 0f
+    darkCircle = 0f
+    foundation = 0f
+    contour = 0f
+    highlighter = 0f
     reshapeValues.fill(0f)
   }
 
@@ -462,6 +627,12 @@ internal class NosmaiAndroidVisualEffects(
     !isNeutral(skinSmoothing) ||
       !isNeutral(skinWhitening) ||
       !isNeutral(teethWhitening) ||
+      !isNeutral(freckles) ||
+      !isNeutral(darkCircle) ||
+      !isNeutral(foundation) ||
+      !isNeutral(contour) ||
+      !isNeutral(highlighter) ||
+      runCatching { NosmaiBeauty.isHairColoringEnabled() }.getOrDefault(false) ||
       hasTrackedColorAdjustments() ||
       reshapeValues.any { !isNeutral(it) } ||
       runCatching { NosmaiBeauty.isMakeupActive(NosmaiBeauty.MAKEUP_ALL) }
@@ -480,6 +651,102 @@ internal class NosmaiAndroidVisualEffects(
       !isNeutral(saturation - 1f) ||
       !isNeutral(whiteBalanceTemperature - WHITE_BALANCE_NEUTRAL) ||
       !isNeutral(whiteBalanceTint)
+
+  /**
+   * Reads a face sticker file (PNG, JPEG or GIF) off the main thread and hands
+   * the encoded bytes back on the main thread. Nothing is decoded here: the SDK
+   * decodes the bytes itself and animates a GIF on the face, so the raw file
+   * is exactly what it needs. Errors carry ERROR_FACE_STICKER_RESOURCE.
+   */
+  internal fun readFaceStickerBytes(
+    uriString: String,
+    completion: (ByteArray?, NosmaiVisualException?) -> Unit
+  ) {
+    try {
+      ioExecutor.execute {
+        val result = runCatching {
+          val file = resolveFaceStickerFile(uriString)
+          FileInputStream(file).use { it.readBytes() }
+        }
+        mainHandler.post {
+          result.fold(
+            onSuccess = { completion(it, null) },
+            onFailure = { error ->
+              completion(
+                null,
+                if (error is NosmaiVisualException) {
+                  error
+                } else {
+                  NosmaiVisualException(
+                    ERROR_FACE_STICKER_RESOURCE,
+                    error.message ?: "Unable to read the face sticker file",
+                    error
+                  )
+                }
+              )
+            }
+          )
+        }
+      }
+    } catch (error: RejectedExecutionException) {
+      completion(
+        null,
+        NosmaiVisualException(
+          ERROR_FACE_STICKER_RESOURCE,
+          "The face sticker resource worker is unavailable",
+          error
+        )
+      )
+    }
+  }
+
+  private fun faceStickerResourceError(message: String): Nothing =
+    throw NosmaiVisualException(ERROR_FACE_STICKER_RESOURCE, message, null)
+
+  private fun resolveFaceStickerFile(uriString: String): File {
+    if (uriString.indexOf('\u0000') >= 0) {
+      faceStickerResourceError("uri contains an invalid NUL character")
+    }
+    val uri = runCatching { Uri.parse(uriString) }.getOrElse { error ->
+      throw NosmaiVisualException(
+        ERROR_FACE_STICKER_RESOURCE,
+        "uri is not a valid file URI",
+        error
+      )
+    }
+    if (
+      uri.scheme != "file" ||
+      uri.query != null ||
+      uri.fragment != null ||
+      (!uri.authority.isNullOrEmpty() && uri.authority != "localhost")
+    ) {
+      faceStickerResourceError(
+        "uri must be an absolute local file:// URI without a query or fragment"
+      )
+    }
+    val path = uri.path?.takeIf { it.startsWith('/') && it.length > 1 }
+      ?: faceStickerResourceError("uri must contain an absolute file path")
+    val file = runCatching { File(path).canonicalFile }.getOrElse { error ->
+      throw NosmaiVisualException(
+        ERROR_FACE_STICKER_RESOURCE,
+        "Unable to resolve the face sticker path",
+        error
+      )
+    }
+    if (!file.isFile || !file.canRead()) {
+      faceStickerResourceError("The face sticker is not a readable file")
+    }
+    if (file.length() <= 0L) {
+      faceStickerResourceError("The face sticker file is empty")
+    }
+    if (file.length() > MAX_FACE_STICKER_BYTES) {
+      faceStickerResourceError("The face sticker file is larger than 32 MB")
+    }
+    if (file.extension.lowercase(Locale.US) !in FACE_STICKER_EXTENSIONS) {
+      faceStickerResourceError("The face sticker must be a PNG, JPEG or GIF file")
+    }
+    return file
+  }
 
   private fun executeIo(
     task: () -> NosmaiBackgroundSegmentationConfig,
@@ -726,7 +993,7 @@ internal class NosmaiAndroidVisualEffects(
   companion object {
     private val THREAD_COUNTER = AtomicInteger(0)
     private const val EPSILON = 0.0001f
-    private const val WHITE_BALANCE_NEUTRAL = 6500f
+    private const val WHITE_BALANCE_NEUTRAL = 5000f
     private const val RESHAPE_COUNT = 10
     private const val MAX_IMAGE_FILE_BYTES = 64L * 1024L * 1024L
     private const val MAX_SOURCE_IMAGE_DIMENSION = 16_384
@@ -744,6 +1011,10 @@ internal class NosmaiAndroidVisualEffects(
 
     private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp")
     private val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mov", "webm", "3gp")
+    const val ERROR_FACE_STICKER_RESOURCE = "E_FACE_STICKER_RESOURCE"
+    // The SDK decodes PNG/JPEG/GIF itself; WebP is not in its decoder.
+    private val FACE_STICKER_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif")
+    private const val MAX_FACE_STICKER_BYTES = 32L * 1024L * 1024L
 
     private val MAKEUP_SPECS = mapOf(
       "lipstick" to MakeupSpec(
@@ -770,10 +1041,10 @@ internal class NosmaiAndroidVisualEffects(
 
     private val RESHAPES = mapOf(
       "lip" to ReshapeSpec(0, -1.0, 1.0),
-      "faceSlim" to ReshapeSpec(1, -1.2, 1.2),
-      "eye" to ReshapeSpec(2, -1.3, 1.3),
-      "nose" to ReshapeSpec(3, -0.5, 0.5),
-      "chin" to ReshapeSpec(4, -0.8, 0.8),
+      "faceSlim" to ReshapeSpec(1, -1.0, 1.0),
+      "eye" to ReshapeSpec(2, -1.0, 1.0),
+      "nose" to ReshapeSpec(3, -1.0, 1.0),
+      "chin" to ReshapeSpec(4, -1.0, 1.0),
       "brow" to ReshapeSpec(5, -1.0, 1.0),
       "browThickness" to ReshapeSpec(6, -1.0, 1.0),
       "jaw" to ReshapeSpec(7, -1.0, 1.0),

@@ -873,6 +873,8 @@ export function normalizeActiveEffects(value: unknown): NosmaiActiveEffects {
     hasManualBackground: booleanValue(
       data.hasManualBackground ?? data.hasManualBackgroundConfig
     ),
+    isFaceStickerActive: booleanValue(data.isFaceStickerActive),
+    isHairColorActive: booleanValue(data.isHairColorActive),
     activeFilter: normalizeFilter(data.activeFilterInfo ?? data.activeFilter),
     activeEffect: normalizeFilter(data.activeEffectInfo ?? data.activeEffect),
   };

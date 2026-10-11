@@ -1,26 +1,28 @@
 # Core API contract
 
 This document defines the stable JavaScript contract shared by the Android and
-iOS native cores. Version `1.0.0` supports the documented surfaces on the
+iOS native cores. Version `2.0.0` supports the documented surfaces on the
 compatibility baseline in the README. Because camera hardware and effect cost
 vary by device, applications should qualify their own target-device matrix.
 
 ## Current platform matrix
 
-| Surface                                                           | Android                                                                                                   | iOS                                                                                                                      |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| TurboModule and Fabric Codegen                                    | Implemented                                                                                               | Implemented                                                                                                              |
-| SDK initialization and license events                             | Implemented through a 3.0.4 compatibility adapter                                                         | Implemented; manually passed in one signed physical Release smoke                                                        |
-| `NosmaiCameraView` processed preview                              | Camera2 OES with YUV fallback; both paths verified on one Pixel 7                                         | Fabric-hosted AVCapture/processed preview; manually passed in one signed physical Release smoke                          |
-| Configure/start/stop/pause/resume/switch                          | Supported                                                                                                  | Supported                                                                                                                 |
-| Local protected-package apply/state/scoped clear                  | Supported                                                                                                  | Supported                                                                                                                 |
-| Installed production package catalog (`getLocalFilters`)          | Supported                                                                                                  | Supported                                                                                                                 |
-| Rendered photo capture, video recording/progress, gallery export  | Supported                                                                                                  | Supported                                                                                                                 |
-| Cloud catalog/download/remove/progress/pagination                 | Supported                                                                                                  | Supported                                                                                                                 |
-| Interactive game input/output/lifecycle                           | Supported                                                                                                  | Supported                                                                                                                 |
-| Beauty, makeup, reshape, eye color, color/HSB, manual backgrounds | Supported                                                                                                  | Supported                                                                                                                 |
-| Flash/torch and authored `.nosmai` parameters                     | Supported when available on the selected camera/package                                                   | Supported when available on the selected camera/package                                                                  |
-| Bounded processed raw-frame stream                                | Supported                                                                                                  | Supported                                                                                                                 |
+| Surface                                                           | Android                                                                                      | iOS                                                                                                         |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| TurboModule and Fabric Codegen                                    | Implemented                                                                                  | Implemented                                                                                                 |
+| SDK initialization and license events                             | Implemented through a 3.0.6 compatibility adapter                                            | Implemented; manually passed in one signed physical Release smoke                                           |
+| `NosmaiCameraView` processed preview                              | Camera2 OES with YUV fallback; both paths verified on one Pixel 7                            | Fabric-hosted AVCapture/processed preview; manually passed in one signed physical Release smoke             |
+| Configure/start/stop/pause/resume/switch                          | Supported                                                                                    | Supported                                                                                                   |
+| Local protected-package apply/state/scoped clear                  | Supported                                                                                    | Supported                                                                                                   |
+| Installed production package catalog (`getLocalFilters`)          | Supported                                                                                    | Supported                                                                                                   |
+| Rendered photo capture, video recording/progress, gallery export  | Supported                                                                                    | Supported                                                                                                   |
+| Cloud catalog/download/remove/progress/pagination                 | Supported                                                                                    | Supported                                                                                                   |
+| Interactive game input/output/lifecycle                           | Supported                                                                                    | Supported                                                                                                   |
+| Beauty, makeup, reshape, eye color, color/HSB, manual backgrounds | Supported                                                                                    | Supported                                                                                                   |
+| Flash/torch and authored `.nosmai` parameters                     | Supported when available on the selected camera/package                                      | Supported when available on the selected camera/package                                                     |
+| Bounded processed raw-frame stream                                | Supported                                                                                    | Supported                                                                                                   |
+| Face stickers (image or animated GIF on the tracked face)         | Supported with a native SDK release that includes the face-sticker API                       | Supported with runtime guards; an older pod rejects with `E_FACE_STICKER_UNSUPPORTED`                       |
+| Hair colouring (segmentation-driven built-in beauty)              | Implemented; requires a native SDK release with the hair-colour API; physical matrix pending | Implemented with runtime guards; older pods reject with `E_HAIR_COLOR_UNSUPPORTED`; physical matrix pending |
 
 The native Nosmai SDK is process-global. The bridge permits one active preview
 owner at a time, even across React context reloads; a newer mounted view
@@ -73,7 +75,7 @@ camera access when status is undetermined; both platforms reject with
 `default`, `high`, and 720p aliases, plus 480p aliases, for `sessionPreset`;
 other values reject with `E_UNSUPPORTED_CAMERA_PRESET`.
 
-On the native SDK 3.0.4 compatibility line, logical cleanup intentionally retains the native process core
+On the native SDK 3.0.6 compatibility line, logical cleanup intentionally retains the native process core
 because the upstream full-cleanup path is not restart-safe. A subsequent
 session in the same process may reuse the same app-bound platform key. A
 different key rejects with `E_LICENSE_KEY_MISMATCH`; the bridge never logs or
@@ -83,39 +85,42 @@ returns either key.
 
 Boolean results report a narrow operation outcome, not general readiness:
 
-| API                             | `true`                                            | `false`                                           | Rejection                                                                                    |
-| ------------------------------- | ------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `initialize`                    | Native initialization accepted                    | Not used                                          | Invalid key argument, mismatch, or initialization failure                                    |
-| `pauseCamera` / `resumeCamera`  | Requested state reached                           | Not used                                          | Invalid session state, cancellation, or native failure                                       |
-| `switchCamera`                  | Switch accepted/completed                         | Debounced or coalesced request was safely skipped | Invalid state, cancellation, or camera failure                                               |
-| `applyEffect` / `applyFilter`   | Package applied while native processing is active | Not used                                          | Inactive/transitioning session, invalid path, native refusal, cancellation, or apply failure |
-| `removeEffect`                  | Matching active package removed                   | Valid path was not active                         | Invalid path, cancellation, or clear failure                                                 |
-| `removeCloudFilter`             | Exact downloaded package removed                  | No downloaded package existed for the ID          | Invalid ID, unsafe resolved path, or filesystem failure                                      |
-| `setFlashMode` / `setTorchMode` | Requested light mode accepted                     | Selected camera cannot provide that mode          | Invalid mode, cancellation, or camera failure                                                |
-| Authored parameter setters      | Native parameter accepted the typed value         | Not used                                          | Invalid input, missing/type-incompatible parameter, cancellation, or `E_EFFECT_PARAMETER`    |
-| `isGameReady` / game input      | Active game is ready / input accepted              | No ready game or input was not accepted            | Invalid input, unavailable session, cancellation, or native failure                          |
+| API                             | `true`                                            | `false`                                           | Rejection                                                                                      |
+| ------------------------------- | ------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `initialize`                    | Native initialization accepted                    | Not used                                          | Invalid key argument, mismatch, or initialization failure                                      |
+| `pauseCamera` / `resumeCamera`  | Requested state reached                           | Not used                                          | Invalid session state, cancellation, or native failure                                         |
+| `switchCamera`                  | Switch accepted/completed                         | Debounced or coalesced request was safely skipped | Invalid state, cancellation, or camera failure                                                 |
+| `applyEffect` / `applyFilter`   | Package applied while native processing is active | Not used                                          | Inactive/transitioning session, invalid path, native refusal, cancellation, or apply failure   |
+| `removeEffect`                  | Matching active package removed                   | Valid path was not active                         | Invalid path, cancellation, or clear failure                                                   |
+| `removeCloudFilter`             | Exact downloaded package removed                  | No downloaded package existed for the ID          | Invalid ID, unsafe resolved path, or filesystem failure                                        |
+| `setFlashMode` / `setTorchMode` | Requested light mode accepted                     | Selected camera cannot provide that mode          | Invalid mode, cancellation, or camera failure                                                  |
+| Authored parameter setters      | Native parameter accepted the typed value         | Not used                                          | Invalid input, missing/type-incompatible parameter, cancellation, or `E_EFFECT_PARAMETER`      |
+| `isGameReady` / game input      | Active game is ready / input accepted             | No ready game or input was not accepted           | Invalid input, unavailable session, cancellation, or native failure                            |
+| `setFaceSticker`                | Sticker is on the face while processing is active | Not used                                          | Inactive session, invalid URI/anchor/range, unreadable file, unsupported SDK, or apply failure |
+| `isFaceStickerActive`           | A face sticker occupies the AR slot               | No sticker is active                              | Uninitialized session                                                                          |
+| `isHairColorActive`             | Hair colouring is enabled                         | Hair colouring is off                             | Uninitialized session                                                                          |
 
 `false` is reserved for documented, non-error outcomes. Callers must handle
 Promise rejection for every operational failure.
 
 ## Protected packages
 
-| API                             | Contract                                                                                                                                                                                                                                              |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `applyEffect(path)`             | Canonical unified application API for a readable local protected `.nosmai` package.                                                                                                                                                                   |
-| `applyFilter(path)`             | Deprecated source-compatible alias for `applyEffect`.                                                                                                                                                                                                 |
-| `getActiveEffects()`            | Returns the normalized authoritative pipeline snapshot.                                                                                                                                                                                               |
-| `getActiveFilterInfo()`         | Returns active color-filter metadata when available.                                                                                                                                                                                                  |
-| `getActiveEffectInfo()`         | Returns active AR/beauty-effect/game metadata when available.                                                                                                                                                                                         |
-| `getEffectParameters()`         | Returns canonical metadata for the active authored package, or an empty list. Types normalize to float/int/bool/string/vector/enum/unknown; `passId` is optional. Untrusted metadata is bounded to 256 parameters, 128 options, and 64 vector values; text is sanitized and non-finite values are discarded.        |
-| `getEffectParameterValue(name)` | Reads a numeric scalar parameter. Missing, string, vector, and incompatible parameters reject with `E_EFFECT_PARAMETER`.                                                                                                                              |
-| `setEffectParameter(name, n)`   | Sets a finite numeric scalar. Native refusal rejects with `E_EFFECT_PARAMETER`; success resolves `true`.                                                                                                                                              |
-| `setEffectParameterString(n,v)` | Sets a string property. Native refusal rejects with `E_EFFECT_PARAMETER`; success resolves `true`. Names are limited to 128 characters and values to 16,384; control characters are rejected.                                                         |
-| `getLocalFilters(packageType?)` | Returns the normalized installed production catalog. Omit the argument for all supported package types, or pass `filter`, `effect`, `background`, `beauty_effect`, or `game`. Results are deterministically sorted and de-duplicated by non-empty local path. |
-| `removeEffect(filterOrPath)`    | Removes the matching active package by path; returns `false` if it was not active.                                                                                                                                                                    |
-| `clearFilter()`                 | Clears only the color-filter slot.                                                                                                                                                                                                                    |
-| `clearAREffect()`               | Clears only the shared AR/beauty-effect/game slot.                                                                                                                                                                                                    |
-| `clearAll()`                    | Explicitly requests full pipeline clearing.                                                                                                                                                                                                           |
+| API                             | Contract                                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `applyEffect(path)`             | Canonical unified application API for a readable local protected `.nosmai` package.                                                                                                                                                                                                                          |
+| `applyFilter(path)`             | Deprecated source-compatible alias for `applyEffect`.                                                                                                                                                                                                                                                        |
+| `getActiveEffects()`            | Returns the normalized authoritative pipeline snapshot.                                                                                                                                                                                                                                                      |
+| `getActiveFilterInfo()`         | Returns active color-filter metadata when available.                                                                                                                                                                                                                                                         |
+| `getActiveEffectInfo()`         | Returns active AR/beauty-effect/game metadata when available.                                                                                                                                                                                                                                                |
+| `getEffectParameters()`         | Returns canonical metadata for the active authored package, or an empty list. Types normalize to float/int/bool/string/vector/enum/unknown; `passId` is optional. Untrusted metadata is bounded to 256 parameters, 128 options, and 64 vector values; text is sanitized and non-finite values are discarded. |
+| `getEffectParameterValue(name)` | Reads a numeric scalar parameter. Missing, string, vector, and incompatible parameters reject with `E_EFFECT_PARAMETER`.                                                                                                                                                                                     |
+| `setEffectParameter(name, n)`   | Sets a finite numeric scalar. Native refusal rejects with `E_EFFECT_PARAMETER`; success resolves `true`.                                                                                                                                                                                                     |
+| `setEffectParameterString(n,v)` | Sets a string property. Native refusal rejects with `E_EFFECT_PARAMETER`; success resolves `true`. Names are limited to 128 characters and values to 16,384; control characters are rejected.                                                                                                                |
+| `getLocalFilters(packageType?)` | Returns the normalized installed production catalog. Omit the argument for all supported package types, or pass `filter`, `effect`, `background`, `beauty_effect`, or `game`. Results are deterministically sorted and de-duplicated by non-empty local path.                                                |
+| `removeEffect(filterOrPath)`    | Removes the matching active package by path; returns `false` if it was not active.                                                                                                                                                                                                                           |
+| `clearFilter()`                 | Clears only the color-filter slot.                                                                                                                                                                                                                                                                           |
+| `clearAREffect()`               | Clears only the shared AR/beauty-effect/game slot.                                                                                                                                                                                                                                                           |
+| `clearAll()`                    | Explicitly requests full pipeline clearing.                                                                                                                                                                                                                                                                  |
 
 An installed Android catalog item can carry an asset-relative path such as
 `Nosmai_Filters/<name>/<name>.nosmai`; pass that returned path to
@@ -136,6 +141,53 @@ preview remains flash-free, `on` temporarily illuminates during capture, and
 capture exactly once, and every terminal path restores the configured torch.
 iOS delegates flash/photo behavior to `NosmaiCamera`. Torch remains continuous
 on both platforms until explicitly disabled or a camera-facing/session reset.
+
+## Face stickers
+
+A face sticker is a built-in overlay pinned to the tracked face. It occupies the
+same AR slot as an `effect`, `beauty_effect`, or `game` package: applying a
+sticker replaces the active package (and clears built-in beauty, as an authored
+AR package does), and `applyEffect` replaces the sticker. While a sticker is
+active, `activeEffectPath` stays undefined; `NosmaiActiveEffects.isFaceStickerActive`
+and `isFaceStickerActive()` report the slot instead. `clearAREffect()` and
+`clearAll()` remove a sticker as well and wait for it to be gone.
+
+| API                                                                                    | Contract                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setFaceSticker({ uri, anchor?, offsetX?, offsetY?, scale?, rotationDeg?, opacity? })` | Reads a PNG, JPEG or GIF from an absolute local `file://` URI (no query/fragment, at most 32 MB) on a native worker and hands the encoded bytes to the SDK, which decodes them and animates a GIF on the face at its own timing. Resolves `true` once the sticker is on the face. Unreadable or unsupported files reject with `E_FACE_STICKER_RESOURCE`. |
+| `setFaceStickerPlacement({ anchor, ... })`                                             | Moves, resizes, rotates or fades the live sticker without re-reading the file; cheap enough for a gesture stream. Pass the anchor the sticker was applied with. A no-op when no sticker is active.                                                                                                                                                       |
+| `clearFaceSticker()`                                                                   | Removes the sticker; resolves when no sticker is active.                                                                                                                                                                                                                                                                                                 |
+| `isFaceStickerActive()`                                                                | Returns whether a sticker occupies the AR slot.                                                                                                                                                                                                                                                                                                          |
+
+Anchors are `center` (default), `forehead`, `aboveHead`, `leftEye`, `rightEye`,
+`eyes` (midpoint of both eyes, sized to span them), `nose`, `mouth`, and `chin`;
+left and right are the subject's. `offsetX` and `offsetY` are fractions of face
+width/height measured from the anchor (`-1..1`, positive `offsetY` toward the
+forehead), `scale` is the sticker width as a multiple of face width (`0..4`,
+`0` selects the anchor's default), `rotationDeg` is `-360..360` clockwise on
+screen, and `opacity` is `0..1`. Out-of-range values reject with
+`E_INVALID_ARGUMENT`. The native decoder bounds memory regardless of frame
+count; a GIF canvas above 8 megapixels is refused.
+
+## Hair colour
+
+Hair colouring is a built-in beauty effect (like teeth whitening or eye colour):
+it rides the built-in beauty chain together with makeup and skin controls, is
+removed by `clearBeauty()` and `clearAll()`, and never touches the AR slot. The
+SDK's hair segmentation model produces the matte on its own native thread; the
+first coloured frame appears once the model has warmed up (no call blocks).
+`NosmaiActiveEffects.isHairColorActive` mirrors `isHairColorActive()`.
+
+| API                                              | Contract                                                                                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `setHairColor({ red, green, blue }, intensity?)` | Enables hair colouring and applies the colour (each channel `0..1`) and intensity (`0..1`, default `0.6`). Calling it again only changes colour / intensity. |
+| `setHairColorIntensity(intensity)`               | Changes the blend intensity (`0..1`) of the active hair colour; rejects with `E_INVALID_STATE` when none is active.                                          |
+| `removeHairColor()`                              | Disables hair colouring; the segmentation model goes idle.                                                                                                   |
+| `isHairColorActive()`                            | Returns whether hair colouring is enabled.                                                                                                                   |
+
+Out-of-range values reject with `E_INVALID_ARGUMENT`. Requires a native SDK
+release with the hair-colour API; an older iOS pod rejects with
+`E_HAIR_COLOR_UNSUPPORTED`.
 
 ## Cloud catalog and downloads
 
@@ -166,14 +218,14 @@ logical session being torn down settle exactly once.
 `games`. Applying a game uses `applyEffect()` and gives the game exclusive
 visual ownership until another visual mode is applied.
 
-| API | Contract |
-| --- | --- |
-| `isGameReady()` | Resolves whether an initialized active game can accept input. |
-| `sendGameTap(x, y)` | Accepts finite normalized preview coordinates from `0..1`; resolves whether native accepted the tap. |
-| `sendGameInput(name, x, y, value?)` | Sends a non-empty named input with normalized coordinates and a finite value; value defaults to `1`. |
-| `pauseGame()` / `resumeGame()` | Optional manual overrides; normal camera lifecycle already pauses and resumes games. |
-| `restartGame()` | Restarts the active game when present. |
-| `addGameEventListener(listener)` | Emits validated `{ event, game, sequence, data }` payloads. Remove the subscription with its owning screen. |
+| API                                 | Contract                                                                                                    |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `isGameReady()`                     | Resolves whether an initialized active game can accept input.                                               |
+| `sendGameTap(x, y)`                 | Accepts finite normalized preview coordinates from `0..1`; resolves whether native accepted the tap.        |
+| `sendGameInput(name, x, y, value?)` | Sends a non-empty named input with normalized coordinates and a finite value; value defaults to `1`.        |
+| `pauseGame()` / `resumeGame()`      | Optional manual overrides; normal camera lifecycle already pauses and resumes games.                        |
+| `restartGame()`                     | Restarts the active game when present.                                                                      |
+| `addGameEventListener(listener)`    | Emits validated `{ event, game, sequence, data }` payloads. Remove the subscription with its owning screen. |
 
 ## Beauty, makeup, reshape, and eye color
 
@@ -184,36 +236,58 @@ available if entitlement changes, so stale native state can still be inspected
 and cleared. JavaScript validates every value before native entry; native code
 validates again.
 
-| API                                                                         | Range and behavior                                                                                                                                                                          |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setSkinSmoothing`, `setSkinWhitening`, `setTeethWhitening`                 | `0..1`; `0` is neutral. No platform-specific `0..10` conversion.                                                                                                                            |
-| `applyMakeup(configuration)`                                                | Applies `lipstick`, `eyeshadow`, `blusher`, `eyelash`, or `eyebrow`; intensity is `0..1`. All except eyelash require custom RGB `0..1`.                                                     |
-| `setMakeupIntensity`, `removeMakeup`, `isMakeupActive`, `clearMakeup`       | Operate on the named layer; setting intensity requires that layer to be active. Clear does not affect reshape, eye color, color controls, packages, or background.                          |
-| `setReshape(type, value)`                                                   | Uses stable cross-platform types `lip`, `faceSlim`, `eye`, `nose`, `chin`, `brow`, `browThickness`, `jaw`, `mouthWidth`, and `forehead`. Values are signed, with type-specific safe ranges. |
-| `clearReshaping()`                                                          | Clears all ten mesh-warp axes only.                                                                                                                                                         |
-| `setEyeColor`, `setEyeColorIntensity`, `removeEyeColor`, `isEyeColorActive` | RGB and intensity are `0..1`; omitted apply intensity defaults to `0.5`, and changing intensity requires active eye color. Uses the modern licensed eye-lens path on Android.               |
-| `clearBeauty()`                                                             | Clears skin smoothing/whitening/teeth, all makeup, reshape, and eye color. It preserves color/HSB controls, package slots, and manual background.                                           |
+| API                                                                         | Range and behavior                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setSkinSmoothing`, `setSkinWhitening`, `setTeethWhitening`                 | `0..1`; `0` is neutral. No platform-specific `0..10` conversion.                                                                                                                                                                    |
+| `applyMakeup(configuration)`                                                | Applies `lipstick`, `eyeshadow`, `blusher`, `eyelash`, or `eyebrow`; lipstick/blusher intensity is `0..2`, others `0..1`. Optional custom RGB `0..1` (alpha ignored); omission restores native style colour. Eyelash is colourless. |
+| `setMakeupIntensity`, `removeMakeup`, `isMakeupActive`, `clearMakeup`       | Operate on the named layer; setting intensity requires that layer to be active. Clear does not affect reshape, eye color, color controls, packages, or background.                                                                  |
+| `setReshape(type, value)`                                                   | Uses stable cross-platform types `lip`, `faceSlim`, `eye`, `nose`, `chin`, `brow`, `browThickness`, `jaw`, `mouthWidth`, and `forehead`. Values are signed, with type-specific safe ranges.                                         |
+| `clearReshaping()`                                                          | Clears all ten mesh-warp axes only.                                                                                                                                                                                                 |
+| `setEyeColor`, `setEyeColorIntensity`, `removeEyeColor`, `isEyeColorActive` | RGB and intensity are `0..1`; omitted apply intensity defaults to `0.5`, and changing intensity requires active eye color. Uses the modern licensed eye-lens path on Android.                                                       |
+| `clearBeauty()`                                                             | Clears skin smoothing/whitening/teeth, contour/highlighter, freckles, foundation, dark-circle correction, all makeup, reshape, eye colour, and hair colour. It preserves color/HSB controls, package slots, and manual background.  |
 
 Makeup style values are stable: lipstick `classic|matte|natural`, eyeshadow
 `smokey|shimmer|natural`, blusher `round|contour|natural`, eyelash
-`natural|dramatic|wispy`, and eyebrow `natural|bold|arched`.
+`natural|dramatic|wispy`, and eyebrow `natural|bold|arched`. Experimental Test styles remain excluded.
 
-Reshape ranges are: lip/brow/brow-thickness/jaw/mouth-width/forehead `-1..1`,
-face-slim `-1.2..1.2`, eye `-1.3..1.3`, nose `-0.5..0.5`, and chin
-`-0.8..0.8`. Applying built-in beauty can replace an authored package in the
+All reshape types retain the signed `-1..1` input range, with `0` neutral. Applying built-in beauty can replace an authored package in the
 shared AR/beauty slot according to the native SDK policy.
+
+### Production beauty additions
+
+Requires native SDK 3.0.6 or newer with the production beauty APIs.
+
+| API                                                                               | Contract                                                                                                                                       |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applyContourHighlighter({ contour?, highlighter? })`                             | Independent `0..2` strengths, each defaults to zero. Both zero removes the pair.                                                               |
+| `applyFreckles(quantity)`, `removeFreckles()`                                     | Production XYZ freckles; `0..1` quantity, zero removes only freckles.                                                                          |
+| `applyFoundation({ shade?, color?, coverage? })`, `removeFoundation()`            | Seven approved shades, custom RGB override, `0..1` coverage; default Honey at `0.5`. Removal preserves other layers.                           |
+| `applyDarkCircleCorrector(intensity)`, `removeDarkCircleCorrector()`              | Production correction `0..1`, scoped removal.                                                                                                  |
+| `getLipstickColors`, `getEyeshadowColors`, `getBlusherColors`, `getEyebrowColors` | Named normalized native palettes, respectively 10/8/6/6 entries.                                                                               |
+| `setBeautyVisible(visible)`, `isBeautyVisible()`                                  | Temporarily toggles native built-in beauty without deleting settings or clearing authored AR/background packages.                              |
+| `prepareBeautyFilters()`, `isBeautyPrepared()`                                    | Off-UI renderer warm-up, shared concurrent callers, retryable false, lifecycle invalidation. Call preparation after processed-frame `onReady`. |
+
+Preparation does not select or clear any filter. Android waits for renderer
+warm-up and native model preparation/fallback; iOS GPU warm-up completes while
+model loading may continue asynchronously. Hair remains lazy. Readiness does
+not certify that every model has loaded. A missing preparation API is reported
+as `E_SDK_UPGRADE_REQUIRED`.
+
+Compatibility methods `setContourHighlighter(level)` and
+`setDarkCircleCorrector(level)` retain their `0..1` input range. The contour
+method forwards the same level to both independent controls.
 
 ## Color and HSB controls
 
 | API                     | Range / neutral                                                |
 | ----------------------- | -------------------------------------------------------------- |
 | `setBrightness`         | `-1..1`; neutral `0`                                           |
-| `setContrast`           | `0..2`; neutral `1`                                            |
+| `setContrast`           | `0..4`; neutral `1`                                            |
 | `setRgbAdjustment`      | each channel `0..2`; neutral `1`                               |
 | `setSharpening`         | `0..1`; neutral `0`                                            |
 | `setGrayscale`          | boolean                                                        |
 | `setHue`                | `0..360`; neutral `0`                                          |
-| `setWhiteBalance`       | temperature `2000..8000`, tint `-1..1`; neutral `6500`, `0`    |
+| `setWhiteBalance`       | temperature `2000..8000`, tint `-1..1`; neutral `5000`, `0`    |
 | `setHsb`                | hue `-360..360`; saturation and brightness `0..2`, neutral `1` |
 | `resetColorAdjustments` | Restores only the controls in this table to neutral values.    |
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { BeautyControls } from './BeautyControls';
 import {
   Button,
   PermissionsAndroid,
@@ -18,6 +19,7 @@ import {
 } from '@nosmai/react-native-effects-sdk';
 import type {
   NosmaiActiveEffects,
+  NosmaiFaceStickerAnchor,
   NosmaiCloudFilterPage,
   NosmaiEffectParameter,
   NosmaiFilter,
@@ -50,6 +52,13 @@ function describeActiveEffects(state: NosmaiActiveEffects): string {
       const segments = path.split('/').filter(Boolean);
       return `${slot}=${segments[segments.length - 1] ?? path}`;
     });
+  if (state.isFaceStickerActive) {
+    // The sticker occupies the AR slot without an effect path.
+    activeSlots.push('sticker=active');
+  }
+  if (state.isHairColorActive) {
+    activeSlots.push('hair=active');
+  }
 
   return `${state.modeName}: ${activeSlots.length > 0 ? activeSlots.join(', ') : 'none'}`;
 }
@@ -159,6 +168,11 @@ export default function App() {
   const [latestFrameMetadata, setLatestFrameMetadata] =
     useState<NosmaiFrameMetadata>();
   const [busy, setBusy] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [beautyPrepared, setBeautyPrepared] = useState(false);
+  const [beautyPreparing, setBeautyPreparing] = useState(false);
+  const [beautyVisible, setBeautyVisible] = useState(true);
+  const [beautyControlsKey, setBeautyControlsKey] = useState(0);
   const [controlMode, setControlMode] = useState<ControlMode>('camera');
   const [cloudCatalog, setCloudCatalog] = useState<NosmaiCloudFilterPage>();
   const [cloudPage, setCloudPage] = useState(1);
@@ -169,6 +183,9 @@ export default function App() {
     'Visual capabilities: not queried'
   );
   const [backgroundUri, setBackgroundUri] = useState('');
+  const [stickerUri, setStickerUri] = useState('');
+  const [stickerAnchor, setStickerAnchor] =
+    useState<NosmaiFaceStickerAnchor>('aboveHead');
   const [status, setStatus] = useState(
     Platform.OS === 'ios'
       ? 'Phase 4 iOS feature harness ready'
@@ -737,6 +754,26 @@ export default function App() {
   const applyEyeColorPreset = () =>
     NosmaiCameraSdk.setEyeColor({ red: 0.12, green: 0.55, blue: 0.85 }, 0.55);
 
+  const prepareBeautyResources = async () => {
+    setBeautyPreparing(true);
+    try {
+      const prepared = await NosmaiCameraSdk.prepareBeautyFilters();
+      setBeautyPrepared(prepared);
+      setBeautyVisible(await NosmaiCameraSdk.isBeautyVisible());
+      return prepared;
+    } finally {
+      setBeautyPreparing(false);
+    }
+  };
+
+  const clearBuiltInBeauty = async () => {
+    await NosmaiCameraSdk.clearBeauty();
+    setBeautyControlsKey((key) => key + 1);
+  };
+
+  const applyHairColorPreset = () =>
+    NosmaiCameraSdk.setHairColor({ red: 0.7, green: 0.35, blue: 0.2 }, 0.6);
+
   const applyColorPreset = async () => {
     await NosmaiCameraSdk.setBrightness(0.05);
     await NosmaiCameraSdk.setContrast(1.1);
@@ -744,7 +781,7 @@ export default function App() {
     await NosmaiCameraSdk.setSharpening(0.2);
     await NosmaiCameraSdk.setGrayscale(false);
     await NosmaiCameraSdk.setHue(8);
-    await NosmaiCameraSdk.setWhiteBalance({ temperature: 6500, tint: 0 });
+    await NosmaiCameraSdk.setWhiteBalance({ temperature: 5000, tint: 0 });
   };
 
   const applyHsbPreset = () =>
@@ -755,7 +792,7 @@ export default function App() {
     });
 
   const clearVisuals = async () => {
-    await NosmaiCameraSdk.clearBeauty();
+    await clearBuiltInBeauty();
     await NosmaiCameraSdk.resetColorAdjustments();
     await NosmaiCameraSdk.clearBackground();
     await refreshVisualCapabilities();
@@ -763,6 +800,9 @@ export default function App() {
 
   const cleanup = async () => {
     await NosmaiCameraSdk.cleanup();
+    setCameraReady(false);
+    setBeautyPrepared(false);
+    setBeautyControlsKey((key) => key + 1);
     setRecording(false);
     setRecordingDuration(0);
     setFrameStreamActive(false);
@@ -786,9 +826,30 @@ export default function App() {
           style={StyleSheet.absoluteFill}
           cameraPosition={cameraPosition}
           mirror={cameraPosition === 'front'}
-          onReady={({ platform }) => setStatus(`Camera ready on ${platform}`)}
+          onReady={({ platform }) => {
+            setCameraReady(true);
+            setStatus(`Camera ready on ${platform}`);
+            prepareBeautyResources().catch((error) => {
+              const sdkError = NosmaiSdkError.fromUnknown(error);
+              setStatus(`${sdkError.code}: ${sdkError.message}`);
+            });
+          }}
           onError={(error) => setStatus(`${error.code}: ${error.message}`)}
         />
+        <View style={styles.beautyVisibility}>
+          <Button
+            title={beautyVisible ? 'Hide beauty' : 'Show beauty'}
+            disabled={busy || !cameraReady}
+            onPress={() =>
+              run('Beauty visibility', async () => {
+                const visible = await NosmaiCameraSdk.isBeautyVisible();
+                await NosmaiCameraSdk.setBeautyVisible(!visible);
+                setBeautyVisible(!visible);
+              })
+            }
+            testID="toggle-beauty-visibility"
+          />
+        </View>
       </View>
 
       <ScrollView
@@ -1033,6 +1094,26 @@ export default function App() {
           </>
         ) : controlMode === 'visual' ? (
           <>
+            <Text style={styles.effectState} testID="beauty-preparation-status">
+              Beauty preparation:{' '}
+              {beautyPreparing
+                ? 'preparing'
+                : beautyPrepared
+                  ? 'ready'
+                  : 'not prepared'}
+            </Text>
+            <Button
+              title="Prepare / check beauty"
+              disabled={busy || beautyPreparing || !cameraReady}
+              onPress={() => run('Prepare beauty', prepareBeautyResources)}
+              testID="prepare-beauty"
+            />
+            <BeautyControls
+              key={beautyControlsKey}
+              disabled={busy}
+              ready={cameraReady}
+              run={run}
+            />
             <Text style={styles.effectState} testID="visual-capabilities">
               {visualState}
             </Text>
@@ -1054,9 +1135,7 @@ export default function App() {
               <Button
                 disabled={busy}
                 title="Clear Beauty"
-                onPress={() =>
-                  run('Clear beauty', () => NosmaiCameraSdk.clearBeauty())
-                }
+                onPress={() => run('Clear beauty', clearBuiltInBeauty)}
                 testID="clear-beauty"
               />
             </View>
@@ -1078,6 +1157,12 @@ export default function App() {
                 title="Eye Color"
                 onPress={() => run('Apply eye color', applyEyeColorPreset)}
                 testID="apply-eye-color"
+              />
+              <Button
+                disabled={busy}
+                title="Hair Color"
+                onPress={() => run('Apply hair color', applyHairColorPreset)}
+                testID="apply-hair-color"
               />
             </View>
             <View style={styles.buttonRow}>
@@ -1104,6 +1189,16 @@ export default function App() {
                   run('Clear eye color', () => NosmaiCameraSdk.removeEyeColor())
                 }
                 testID="clear-eye-color"
+              />
+              <Button
+                disabled={busy}
+                title="Clear Hair"
+                onPress={() =>
+                  run('Clear hair color', () =>
+                    NosmaiCameraSdk.removeHairColor()
+                  )
+                }
+                testID="clear-hair-color"
               />
             </View>
             <View style={styles.buttonRow}>
@@ -1209,6 +1304,96 @@ export default function App() {
                 title="Clear Visuals"
                 onPress={() => run('Clear visual controls', clearVisuals)}
                 testID="clear-visuals"
+              />
+            </View>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setStickerUri}
+              placeholder="Absolute file:// PNG, JPEG or GIF sticker URI"
+              placeholderTextColor="#7f8795"
+              style={styles.input}
+              value={stickerUri}
+            />
+            <View style={styles.buttonRow}>
+              <Button
+                disabled={busy}
+                title="Sticker Head"
+                onPress={() =>
+                  run('Apply face sticker above head', async () => {
+                    setStickerAnchor('aboveHead');
+                    return NosmaiCameraSdk.setFaceSticker({
+                      uri: stickerUri,
+                      anchor: 'aboveHead',
+                    });
+                  })
+                }
+                testID="sticker-above-head"
+              />
+              <Button
+                disabled={busy}
+                title="Sticker Nose"
+                onPress={() =>
+                  run('Apply face sticker on nose', async () => {
+                    setStickerAnchor('nose');
+                    return NosmaiCameraSdk.setFaceSticker({
+                      uri: stickerUri,
+                      anchor: 'nose',
+                      offsetY: 0.05,
+                      scale: 0.4,
+                    });
+                  })
+                }
+                testID="sticker-nose"
+              />
+              <Button
+                disabled={busy}
+                title="Sticker Eyes"
+                onPress={() =>
+                  run('Apply face sticker over eyes', async () => {
+                    setStickerAnchor('eyes');
+                    return NosmaiCameraSdk.setFaceSticker({
+                      uri: stickerUri,
+                      anchor: 'eyes',
+                    });
+                  })
+                }
+                testID="sticker-eyes"
+              />
+            </View>
+            <View style={styles.buttonRow}>
+              <Button
+                disabled={busy}
+                title="Sticker Bigger"
+                onPress={() =>
+                  run('Enlarge face sticker', () =>
+                    NosmaiCameraSdk.setFaceStickerPlacement({
+                      anchor: stickerAnchor,
+                      scale: 1.0,
+                    })
+                  )
+                }
+                testID="sticker-bigger"
+              />
+              <Button
+                disabled={busy}
+                title="Sticker Active?"
+                onPress={() =>
+                  run('Query face sticker', () =>
+                    NosmaiCameraSdk.isFaceStickerActive()
+                  )
+                }
+                testID="sticker-active"
+              />
+              <Button
+                disabled={busy}
+                title="Clear Sticker"
+                onPress={() =>
+                  run('Clear face sticker', () =>
+                    NosmaiCameraSdk.clearFaceSticker()
+                  )
+                }
+                testID="sticker-clear"
               />
             </View>
           </>
@@ -1370,6 +1555,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  beautyVisibility: { position: 'absolute', top: 14, left: 14 },
   screen: {
     flex: 1,
     backgroundColor: '#080b12',

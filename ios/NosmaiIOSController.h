@@ -111,8 +111,6 @@ typedef void (^NosmaiIOSCompletion)(id _Nullable value,
 - (void)restartGameWithCompletion:(NosmaiIOSCompletion)completion;
 - (void)getLocalFiltersOfType:(nullable NSString *)packageType
                     completion:(NosmaiIOSCompletion)completion;
-- (void)getDebugFiltersOfType:(nullable NSString *)packageType
-                    completion:(NosmaiIOSCompletion)completion;
 - (void)isCloudFilterEnabledWithCompletion:(NosmaiIOSCompletion)completion;
 - (void)getCloudFiltersOfType:(nullable NSString *)packageType
                        version:(NSString *)version
@@ -130,8 +128,33 @@ typedef void (^NosmaiIOSCompletion)(id _Nullable value,
 - (void)clearAREffectWithCompletion:(NosmaiIOSCompletion)completion;
 - (void)clearAllWithCompletion:(NosmaiIOSCompletion)completion;
 
+- (void)setFaceStickerAtURI:(NSString *)resourceURI
+                     anchor:(NSString *)anchor
+                    offsetX:(double)offsetX
+                    offsetY:(double)offsetY
+                      scale:(double)scale
+                rotationDeg:(double)rotationDeg
+                    opacity:(double)opacity
+                 completion:(NosmaiIOSCompletion)completion;
+- (void)setFaceStickerPlacementWithAnchor:(NSString *)anchor
+                                  offsetX:(double)offsetX
+                                  offsetY:(double)offsetY
+                                    scale:(double)scale
+                              rotationDeg:(double)rotationDeg
+                                  opacity:(double)opacity
+                               completion:(NosmaiIOSCompletion)completion;
+- (void)clearFaceStickerWithCompletion:(NosmaiIOSCompletion)completion;
+- (void)isFaceStickerActiveWithCompletion:(NosmaiIOSCompletion)completion;
+
 - (void)isBeautyEffectEnabledWithCompletion:(NosmaiIOSCompletion)completion;
 - (void)isAdvancedFiltersEnabledWithCompletion:(NosmaiIOSCompletion)completion;
+- (void)prepareBeautyFiltersWithCompletion:(NosmaiIOSCompletion)completion;
+- (void)isBeautyPreparedWithCompletion:(NosmaiIOSCompletion)completion;
+- (void)setBeautyVisible:(BOOL)visible completion:(NosmaiIOSCompletion)completion;
+- (void)isBeautyVisibleWithCompletion:(NosmaiIOSCompletion)completion;
+- (void)applyContour:(double)contour highlighter:(double)highlighter completion:(NosmaiIOSCompletion)completion;
+- (void)applyFoundation:(double)coverage red:(double)red green:(double)green blue:(double)blue completion:(NosmaiIOSCompletion)completion;
+- (void)getMakeupColorsOfType:(NSString *)type completion:(NosmaiIOSCompletion)completion;
 - (void)setBeautyControl:(NSString *)control
                     value:(double)value
                completion:(NosmaiIOSCompletion)completion;
@@ -142,6 +165,7 @@ typedef void (^NosmaiIOSCompletion)(id _Nullable value,
                      green:(double)green
                       blue:(double)blue
                  intensity:(double)intensity
+           useDefaultColor:(BOOL)useDefaultColor
                 completion:(NosmaiIOSCompletion)completion;
 - (void)setMakeupIntensityForType:(NSString *)makeupType
                          intensity:(double)intensity
@@ -164,6 +188,15 @@ typedef void (^NosmaiIOSCompletion)(id _Nullable value,
                     completion:(NosmaiIOSCompletion)completion;
 - (void)removeEyeColorWithCompletion:(NosmaiIOSCompletion)completion;
 - (void)isEyeColorActiveWithCompletion:(NosmaiIOSCompletion)completion;
+- (void)setHairColorRed:(double)red
+                   green:(double)green
+                    blue:(double)blue
+               intensity:(double)intensity
+              completion:(NosmaiIOSCompletion)completion;
+- (void)setHairColorIntensity:(double)intensity
+                     completion:(NosmaiIOSCompletion)completion;
+- (void)removeHairColorWithCompletion:(NosmaiIOSCompletion)completion;
+- (void)isHairColorActiveWithCompletion:(NosmaiIOSCompletion)completion;
 - (void)setColorControl:(NSString *)control
                   value1:(double)value1
                   value2:(double)value2

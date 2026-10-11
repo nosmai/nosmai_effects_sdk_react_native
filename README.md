@@ -7,23 +7,23 @@ local and cloud protected packages, beauty/makeup/reshape/eye-color controls,
 color/HSB adjustment, interactive camera games, and manual
 blur/color/image/video backgrounds.
 
-> Stable release: version `1.0.0` is the production React Native package for
+> Stable release: version `2.0.0` is the production React Native package for
 > the supported compatibility baseline below. Validate camera, effect, and
 > recording behavior on the physical device models targeted by your app.
 
 ## Compatibility
 
-| Layer             | Supported baseline                                                                                         |
-| ----------------- | ---------------------------------------------------------------------------------------------------------- |
-| Expo              | SDK `54.x`; custom development/EAS build required (Expo Go is unsupported)                                 |
-| React Native      | `0.81.5` compatibility line; `>=0.81.5 <0.82.0` peer range                                                 |
-| React             | `19.1.x`                                                                                                   |
-| Architecture      | New Architecture only (TurboModule + Fabric); legacy architecture is not supported                         |
-| Android           | Effective RN minimum API 24; native SDK supports API 21; physical `arm64-v8a` or `armeabi-v7a` device      |
-| iOS               | iOS 15+; physical arm64 iPhone or iPad                                                                      |
-| Native Nosmai SDK | Android `3.0.4`; iOS `NosmaiCameraSDK 3.0.4`                                                               |
+| Layer             | Supported baseline                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| Expo              | SDK `54.x`; custom development/EAS build required (Expo Go is unsupported)                            |
+| React Native      | `0.81.5` compatibility line; `>=0.81.5 <0.82.0` peer range                                            |
+| React             | `19.1.x`                                                                                              |
+| Architecture      | New Architecture only (TurboModule + Fabric); legacy architecture is not supported                    |
+| Android           | Effective RN minimum API 24; native SDK supports API 21; physical `arm64-v8a` or `armeabi-v7a` device |
+| iOS               | iOS 15+; physical arm64 iPhone or iPad                                                                |
+| Native Nosmai SDK | Android `3.0.6`; iOS `NosmaiCameraSDK 3.0.6`                                                          |
 
-Version `1.0.0` targets Expo SDK 54, React Native 0.81.5, React 19.1, and the
+Version `2.0.0` targets Expo SDK 54, React Native 0.81.5, React 19.1, and the
 React Native New Architecture. The current iOS SDK framework is device-only,
 so bridge linking targets `generic/platform=iOS` rather than iOS Simulator.
 Generic Debug and Release compilation does not need an attached iPhone, but
@@ -103,8 +103,8 @@ yarn add @nosmai/react-native-effects-sdk
 ### Android native SDK
 
 The npm package does not contain Nosmai's proprietary AAR. Download the
-authorized Android `3.0.4` artifact and `SHA256SUMS` from the
-[Nosmai Effects SDK for Android v3.0.4 release](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.4),
+authorized Android `3.0.6` artifact and `SHA256SUMS` from the
+[Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases),
 verify its checksum, and place exactly one copy at:
 
 ```text
@@ -154,7 +154,7 @@ complete lifecycle on every Android device family supported by your app.
 
 ### iOS native SDK
 
-The podspec depends on `NosmaiCameraSDK ~> 3.0.4`; it does not vendor a
+The podspec depends on `NosmaiCameraSDK ~> 3.0.6`; it does not vendor a
 framework. Install pods from the application:
 
 ```sh
@@ -239,7 +239,7 @@ function Preview({ licenseKey }: { licenseKey: string }) {
 Never commit, log, screenshot, or send a complete license key to analytics.
 Android and iOS applications normally use different app-bound keys.
 
-On the native SDK 3.0.4 compatibility line, `cleanup()` performs camera/preview/session teardown but
+On the native SDK 3.0.6 compatibility line, `cleanup()` performs camera/preview/session teardown but
 intentionally keeps the native process core initialized. The SDK's full cleanup
 currently leaves its `NosmaiCore` reinitialization guard stale. A later session
 in the same process must therefore use the same app-bound platform key;
@@ -348,14 +348,6 @@ file inside the app sandbox. Catalog cleanup is deliberately disabled for
 scoped/page requests. A bridge download watchdog rejects a lost callback after
 315 seconds; the SDK has no cancellation API, so an underlying transfer may
 still finish later.
-
-For development builds, loose `.nosmai` files bundled under `assets/filters`
-can be discovered without a production manifest/preview folder:
-
-```ts
-const debugPackages = await NosmaiCameraSdk.getDebugFilters();
-const debugGames = await NosmaiCameraSdk.getDebugFilters('game');
-```
 
 Use `getLocalFilters()` for the installed production package catalog.
 
@@ -486,8 +478,10 @@ backpressure, and format details.
 Applying beauty and color controls requires `isBeautyEffectEnabled()`. Applying
 manual background segmentation requires `isAdvancedFiltersEnabled()`. Scoped
 queries, removals, and resets remain available if entitlement changes. Values
-use the same scale on Android and iOS: beauty/makeup/eye intensities and RGB
-components are `0..1`, RGB multipliers are `0..2`, HSB saturation/brightness
+use the same scale on Android and iOS. Skin controls, eye intensity, dark-circle
+correction, foundation coverage, freckles quantity, and RGB components are
+`0..1`. Lipstick/blusher strength and contour/highlighter are `0..2`; other
+makeup layers stay at `0..1`. RGB multipliers and HSB saturation/brightness
 are `0..2`, and manual background blur is `0..1`.
 
 ```ts
@@ -515,9 +509,124 @@ Image and video backgrounds accept readable absolute `file://` URIs; bytes are
 never copied across JSI. The portable formats are JPEG/PNG/WebP and MP4/M4V/MOV.
 Use the scoped clear APIs to preserve unrelated state:
 `clearMakeup`, `clearReshaping`, `removeEyeColor`, `resetColorAdjustments`, and
-`clearBackground`. `clearBeauty` removes skin beauty, makeup, reshaping, and eye
-color without clearing package filters, color adjustments, or a manual
-background.
+`clearBackground`. `clearBeauty` removes skin controls, contour/highlighter,
+freckles, foundation, dark-circle correction, makeup, reshaping, eye colour,
+and hair colour. It preserves package slots, colour adjustments, and manual
+backgrounds.
+
+### Production complexion, colours, and readiness
+
+Use native SDK **3.0.6 or newer with the production beauty APIs** on both
+platforms. Update the Android AAR and iOS pod or local framework before running
+the example. This wrapper does not bundle native artifacts.
+
+```ts
+// Call after the camera view's first processed-frame onReady event.
+const prepared = await NosmaiCameraSdk.prepareBeautyFilters();
+const stillPrepared = await NosmaiCameraSdk.isBeautyPrepared();
+await NosmaiCameraSdk.setBeautyVisible(false); // temporary before/after view
+await NosmaiCameraSdk.setBeautyVisible(true); // restores retained settings
+const visible = await NosmaiCameraSdk.isBeautyVisible();
+
+await NosmaiCameraSdk.applyContourHighlighter({
+  contour: 0.5,
+  highlighter: 0.7,
+});
+await NosmaiCameraSdk.applyFreckles(0.65); // quantity; keeps the approved look
+await NosmaiCameraSdk.applyFoundation({ shade: 'honey', coverage: 0.5 });
+await NosmaiCameraSdk.applyDarkCircleCorrector(0.6);
+
+const colours = await NosmaiCameraSdk.getEyebrowColors();
+await NosmaiCameraSdk.applyMakeup({
+  type: 'eyebrow',
+  style: 'bold',
+  color: colours[1],
+  intensity: 0.8,
+});
+await NosmaiCameraSdk.applyMakeup({ type: 'eyebrow', style: 'bold' });
+// Omitting colour restores the selected style's default colour.
+await NosmaiCameraSdk.removeFreckles();
+await NosmaiCameraSdk.removeFoundation();
+await NosmaiCameraSdk.removeDarkCircleCorrector();
+```
+
+Foundation shades match the approved Flutter presets:
+`ivory|beige|sand|honey|caramel|mocha|deep`. Omitted configuration uses Honey at
+`0.5` coverage; a custom normalized `color` overrides the shade's RGB. Zero
+coverage/quantity/intensity removes only its complexion layer. Contour and
+highlighter default to zero independently; supply both current strengths when
+adjusting one while keeping the other.
+
+`getLipstickColors`, `getEyeshadowColors`, `getBlusherColors`, and
+`getEyebrowColors` return named native palettes (10/8/6/6 colours). All coloured
+makeup layers accept optional custom RGB; `alpha` does not control makeup or
+foundation transparency. Set `intensity`/`coverage` instead. Eyelash is
+colourless. Each makeup layer exposes its three production styles. Production
+Freckles/Foundation/Dark Circle use their dedicated SDK paths; experimental Test styles are not exposed.
+
+Preparation warms the makeup renderer on a private worker without applying a
+filter or blocking the UI thread. Concurrent requests share one preparation;
+stopping/replacing the pipeline or cleanup invalidates readiness. `false`
+means retry after the next processed-frame `onReady`. Readiness covers renderer
+warm-up and the native model preparation/fallback path; iOS model loading can
+continue asynchronously, and hair segmentation remains lazy. It is not a
+promise that every segmentation model has finished loading.
+
+Cloud beauty packages already use the normal catalog/download/apply route:
+`getCloudFilters({ packageType: 'beauty_effect' })`. They share the authored AR
+slot and follow the existing package replacement policy.
+
+The existing `setContourHighlighter(level)` and `setDarkCircleCorrector(level)`
+methods remain supported on `0..1`. The first sets both contour and highlighter
+to the same value; use `applyContourHighlighter` for independent strengths.
+
+## Face stickers
+
+Pin any image, or an animated GIF, to the tracked face. The file's bytes go to
+the native SDK unchanged; frames, timing and looping are handled inside it.
+
+```ts
+await NosmaiCameraSdk.setFaceSticker({
+  uri: 'file:///…/heart.gif', // PNG, JPEG or GIF; a GIF animates
+  anchor: 'aboveHead',
+});
+
+// Cheap enough for a gesture or slider; pass the same anchor.
+await NosmaiCameraSdk.setFaceStickerPlacement({
+  anchor: 'aboveHead',
+  offsetY: 0.05, // a little higher, in face units
+  scale: 0.8, // width as a multiple of face width; 0 = anchor default
+});
+
+await NosmaiCameraSdk.clearFaceSticker();
+```
+
+Anchors: `center`, `forehead`, `aboveHead`, `leftEye`, `rightEye`, `eyes`
+(sunglasses, masks), `nose`, `mouth`, `chin`; left and right are the subject's.
+The sticker shares the AR slot with `.nosmai` effects: applying one replaces the
+other, and built-in beauty is cleared when a sticker is applied. While a sticker
+is active, `activeEffectPath` stays undefined; use `isFaceStickerActive()` or
+`NosmaiActiveEffects.isFaceStickerActive`. Face stickers need a native SDK
+release that includes the face-sticker API; an older iOS pod rejects with
+`E_FACE_STICKER_UNSUPPORTED`.
+
+## Hair colour
+
+Recolour the hair with the SDK's on-device hair segmentation. A built-in beauty
+effect: it combines with makeup and skin controls and never touches the AR slot.
+
+```ts
+await NosmaiCameraSdk.setHairColor({ red: 0.7, green: 0.35, blue: 0.2 }, 0.6);
+await NosmaiCameraSdk.setHairColorIntensity(0.8); // 0..1
+await NosmaiCameraSdk.removeHairColor();
+const on = await NosmaiCameraSdk.isHairColorActive();
+```
+
+The segmentation model runs on its own native thread; the first coloured frame
+appears once it has warmed up. `clearBeauty()` and `clearAll()` remove it too.
+`NosmaiActiveEffects.isHairColorActive` mirrors `isHairColorActive()`. Needs a
+native SDK release with the hair-colour API; an older iOS pod rejects with
+`E_HAIR_COLOR_UNSUPPORTED`.
 
 ## Development
 

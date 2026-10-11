@@ -425,4 +425,18 @@ describe('native payload normalization', () => {
     ).toBeUndefined();
     expect(normalizeRecordingProgress(null)).toBeUndefined();
   });
+
+  it('surfaces the face sticker slot flag that the effect path cannot show', () => {
+    expect(
+      normalizeActiveEffects({ isFaceStickerActive: true }).isFaceStickerActive
+    ).toBe(true);
+    expect(normalizeActiveEffects({}).isFaceStickerActive).toBe(false);
+  });
+
+  it('surfaces the hair color flag as built-in beauty', () => {
+    expect(
+      normalizeActiveEffects({ isHairColorActive: true }).isHairColorActive
+    ).toBe(true);
+    expect(normalizeActiveEffects({}).isHairColorActive).toBe(false);
+  });
 });

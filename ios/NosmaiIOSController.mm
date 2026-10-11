@@ -36,10 +36,15 @@ static NSString *const NosmaiIOSErrorInvalidPackagePath =
     @"E_INVALID_PACKAGE_PATH";
 static NSString *const NosmaiIOSErrorEffectApply = @"E_EFFECT_APPLY";
 static NSString *const NosmaiIOSErrorEffectClear = @"E_EFFECT_CLEAR";
+static NSString *const NosmaiIOSErrorFaceStickerResource =
+    @"E_FACE_STICKER_RESOURCE";
+static NSString *const NosmaiIOSErrorFaceStickerUnsupported =
+    @"E_FACE_STICKER_UNSUPPORTED";
+static NSString *const NosmaiIOSErrorHairColorUnsupported =
+    @"E_HAIR_COLOR_UNSUPPORTED";
 static NSString *const NosmaiIOSErrorEffectState = @"E_EFFECT_STATE";
 static NSString *const NosmaiIOSErrorEffectParameter = @"E_EFFECT_PARAMETER";
 static NSString *const NosmaiIOSErrorLocalCatalog = @"E_LOCAL_CATALOG";
-static NSString *const NosmaiIOSErrorDebugFilters = @"E_DEBUG_FILTERS";
 static NSString *const NosmaiIOSErrorOperationCancelled = @"E_OPERATION_CANCELLED";
 static NSString *const NosmaiIOSErrorCleanup = @"E_CLEANUP";
 static NSString *const NosmaiIOSErrorRecordingPermission =
@@ -78,6 +83,59 @@ static NSString *const NosmaiIOSErrorFrameStream = @"E_FRAME_STREAM";
 
 static NSTimeInterval const NosmaiIOSCameraSwitchDebounceSeconds = 0.3;
 static NSTimeInterval const NosmaiIOSEffectStateTimeoutSeconds = 3.0;
+static unsigned long long const NosmaiIOSMaxFaceStickerBytes = 32ull * 1024ull * 1024ull;
+
+// JS anchor names → NosmaiFaceStickerAnchor raw values. Names, never ordinals,
+// cross the bridge; the numbers are the SDK's ABI (append only, never reorder).
+static NSDictionary<NSString *, NSNumber *> *NosmaiIOSFaceStickerAnchors(void) {
+  static NSDictionary<NSString *, NSNumber *> *anchors;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    anchors = @{
+      @"center" : @0,
+      @"forehead" : @1,
+      @"aboveHead" : @2,
+      @"leftEye" : @3,
+      @"rightEye" : @4,
+      @"eyes" : @5,
+      @"nose" : @6,
+      @"mouth" : @7,
+      @"chin" : @8,
+    };
+  });
+  return anchors;
+}
+
+// Face sticker selectors ship in a Nosmai iOS release newer than the 3.0.x pods
+// this podspec accepts. Declared here so the bridge compiles against older
+// headers; every call is guarded with -respondsToSelector:, so an older
+// installed binary rejects with E_FACE_STICKER_UNSUPPORTED instead of crashing.
+// The two selectors that take the NosmaiFaceStickerAnchor enum are NOT
+// declared here: older headers lack the typedef, and under ObjC++ a
+// redeclaration with NSInteger conflicts with the real one (C++ forbids the
+// implicit int→enum conversion). They are called through their IMPs with the
+// enum's underlying NSInteger, which is ABI-identical.
+@interface NosmaiSDK (NosmaiReactNativeFaceSticker)
+- (void)clearFaceSticker;
+- (BOOL)isFaceStickerActive;
+@end
+
+// Hair colouring selectors also ship in a Nosmai iOS release newer than the
+// pinned pods. Only BOOL/float parameters, so a plain category redeclaration
+// is enough; every call is guarded with -respondsToSelector: and an older
+// binary rejects with E_HAIR_COLOR_UNSUPPORTED.
+@interface NosmaiSDK (NosmaiReactNativeHairColor)
+- (void)setHairColoringEnabled:(BOOL)enabled;
+- (void)setHairColorWithRed:(float)red green:(float)green blue:(float)blue;
+- (void)setHairColorIntensity:(float)intensity;
+- (BOOL)isHairColoringEnabled;
+@end
+
+typedef BOOL (*NosmaiIOSSetFaceStickerDataIMP)(id, SEL, NSData *, NSInteger,
+                                               float, float, float, float,
+                                               float);
+typedef void (*NosmaiIOSSetFaceStickerAnchorIMP)(id, SEL, NSInteger, float,
+                                                 float, float, float, float);
 static NSTimeInterval const NosmaiIOSRecordingProgressIntervalSeconds = 0.5;
 static NSTimeInterval const NosmaiIOSRecordingStartTimeoutSeconds = 10.0;
 static NSTimeInterval const NosmaiIOSRecordingStopTimeoutSeconds = 15.0;
@@ -593,20 +651,20 @@ static BOOL NosmaiIOSReshapeSpecification(NSString *_Nullable reshapeType,
     *maximum = 1.0;
   } else if ([reshapeType isEqualToString:@"faceSlim"]) {
     *nativeType = NosmaiReshapeTypeFaceSlim;
-    *minimum = -1.2;
-    *maximum = 1.2;
+    *minimum = -1.0;
+    *maximum = 1.0;
   } else if ([reshapeType isEqualToString:@"eye"]) {
     *nativeType = NosmaiReshapeTypeEye;
-    *minimum = -1.3;
-    *maximum = 1.3;
+    *minimum = -1.0;
+    *maximum = 1.0;
   } else if ([reshapeType isEqualToString:@"nose"]) {
     *nativeType = NosmaiReshapeTypeNose;
-    *minimum = -0.5;
-    *maximum = 0.5;
+    *minimum = -1.0;
+    *maximum = 1.0;
   } else if ([reshapeType isEqualToString:@"chin"]) {
     *nativeType = NosmaiReshapeTypeChin;
-    *minimum = -0.8;
-    *maximum = 0.8;
+    *minimum = -1.0;
+    *maximum = 1.0;
   } else if ([reshapeType isEqualToString:@"brow"]) {
     *nativeType = NosmaiReshapeTypeBrow;
     *minimum = -1.0;
@@ -756,6 +814,11 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
   dispatch_queue_t _cameraQueue;
   dispatch_queue_t _mediaQueue;
   dispatch_queue_t _cloudQueue;
+  dispatch_queue_t _beautyPreparationQueue;
+  std::atomic_uint64_t _beautyPreparationGeneration;
+  BOOL _beautyPrepared;
+  BOOL _beautyPreparing;
+  NSMutableArray *_beautyPreparationCompletions;
 
   BOOL _initialized;
   BOOL _initializing;
@@ -784,6 +847,7 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
   BOOL _hasPendingPreviewAttachment;
   BOOL _hasPendingPresentation;
   BOOL _eyeColorConfigured;
+  BOOL _hairColorConfigured;
 
   NSString *_initializedLicenseDigest;
   NSString *_initializingLicenseDigest;
@@ -852,6 +916,9 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
                                         DISPATCH_QUEUE_SERIAL);
     _cloudQueue = dispatch_queue_create("com.nosmai.reactnative.cloud.ios",
                                         DISPATCH_QUEUE_SERIAL);
+    _beautyPreparationQueue = dispatch_queue_create("com.nosmai.reactnative.beauty.prepare", DISPATCH_QUEUE_SERIAL);
+    _beautyPreparationGeneration.store(0);
+    _beautyPreparationCompletions = [NSMutableArray array];
     _desiredPosition = @"front";
     _currentFlashMode = AVCaptureFlashModeOff;
     _currentTorchMode = AVCaptureTorchModeOff;
@@ -918,6 +985,7 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
 - (void)detachModuleSink:(id<NosmaiIOSModuleEventSink>)sink {
   NosmaiIOSRunOnMain(^{
     if (self->_moduleSink == sink) {
+      [self invalidateBeautyPreparation];
       self->_moduleSink = nil;
       [self updateGameEventHandler];
     }
@@ -1241,6 +1309,7 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
         self->_initialized = YES;
         self->_initializedLicenseDigest = digest;
         self->_eyeColorConfigured = NO;
+        self->_hairColorConfigured = NO;
         self->_eyeColorIntensity = 0.0;
         core.delegate = self;
         core.camera.delegate = self;
@@ -2575,7 +2644,9 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
                   NosmaiPipelineState *state =
                       [[NosmaiCore shared].effects currentPipelineState];
                   if ([self pathsEqual:path other:state.activeEffectPath]) {
+                    [self invalidateBeautyPreparation];
                     self->_eyeColorConfigured = NO;
+                    self->_hairColorConfigured = NO;
                     self->_eyeColorIntensity = 0.0;
                     [self emitCurrentPipelineState];
                   }
@@ -3000,70 +3071,6 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
           exception, NosmaiIOSErrorLocalCatalog,
           @"Unable to load the local Nosmai package catalog");
       completion(nil, NosmaiIOSErrorLocalCatalog, error.localizedDescription,
-                 error);
-    }
-  });
-}
-
-- (void)getDebugFiltersOfType:(NSString *_Nullable)packageType
-                    completion:(NosmaiIOSCompletion)completion {
-  NosmaiIOSRunOnMain(^{
-    if (![self ensureInitializedForCompletion:completion]) return;
-
-    NosmaiFilterType nativeType = NosmaiFilterTypeUnknown;
-    if (packageType) {
-      if ([packageType isEqualToString:@"filter"]) {
-        nativeType = NosmaiFilterTypeFilter;
-      } else if ([packageType isEqualToString:@"effect"]) {
-        nativeType = NosmaiFilterTypeEffect;
-      } else if ([packageType isEqualToString:@"background"]) {
-        nativeType = NosmaiFilterTypeBackground;
-      } else if ([packageType isEqualToString:@"beauty_effect"]) {
-        nativeType = NosmaiFilterTypeBeautyEffect;
-      } else if ([packageType isEqualToString:@"game"]) {
-        nativeType = NosmaiFilterTypeGame;
-      } else {
-        completion(nil, NosmaiIOSErrorInvalidArgument,
-                   @"packageType must be filter, effect, background, beauty_effect, or game",
-                   nil);
-        return;
-      }
-    }
-
-    void (^debugCompletion)(NSArray<NosmaiFilterInfo *> *, NSError *) =
-        ^(NSArray<NosmaiFilterInfo *> *filters, NSError *error) {
-      NosmaiIOSRunOnMain(^{
-        if (error) {
-          completion(nil, NosmaiIOSErrorDebugFilters,
-                     error.localizedDescription ?: @"Unable to load bundled debug filters",
-                     error);
-          return;
-        }
-
-        NSMutableArray<NSDictionary *> *items =
-            [NSMutableArray arrayWithCapacity:filters.count];
-        for (NosmaiFilterInfo *info in filters) {
-          NSDictionary *map = [self filterInfoMap:info
-                                     fallbackPath:info.path
-                                     fallbackType:info.typeKey ?: packageType ?: @"effect"];
-          if (map) [items addObject:map];
-        }
-        completion(@{ @"items" : [items copy] }, nil, nil, nil);
-      });
-    };
-
-    @try {
-      NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
-      if (packageType) {
-        [sdk getDebugFiltersOfType:nativeType completion:debugCompletion];
-      } else {
-        [sdk getDebugFiltersWithCompletion:debugCompletion];
-      }
-    } @catch (NSException *exception) {
-      NSError *error = NosmaiIOSErrorFromException(
-          exception, NosmaiIOSErrorDebugFilters,
-          @"Unable to load bundled debug filters");
-      completion(nil, NosmaiIOSErrorDebugFilters, error.localizedDescription,
                  error);
     }
   });
@@ -3672,6 +3679,413 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
   });
 }
 
+#pragma mark - Face sticker
+
+// The sticker occupies the AR slot (the one applyEffect / clearAREffect use),
+// but the pipeline state's activeEffectPath stays nil while it does, so every
+// slot check on this path goes through -faceStickerActive. Selectors are
+// runtime-guarded (see the category near the top of this file).
+
+- (BOOL)faceStickerActive {
+  NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+  if (![sdk respondsToSelector:@selector(isFaceStickerActive)]) return NO;
+  @try {
+    return [sdk isFaceStickerActive];
+  } @catch (__unused NSException *exception) {
+    return NO;
+  }
+}
+
+- (BOOL)faceStickerSupported:(SEL)selector
+                  completion:(NosmaiIOSCompletion)completion {
+  if ([[NosmaiSDK sharedInstance] respondsToSelector:selector]) return YES;
+  completion(nil, NosmaiIOSErrorFaceStickerUnsupported,
+             @"The installed Nosmai iOS SDK does not support face stickers",
+             nil);
+  return NO;
+}
+
+// Runs on _mediaQueue. Returns the encoded file bytes (PNG, JPEG or GIF);
+// nothing is decoded here — the SDK decodes the bytes itself and animates a
+// GIF on the face, so the raw file is exactly what it needs.
+- (NSData *)faceStickerDataAtURL:(NSURL *)url error:(NSString **)reason {
+  NSAssert(!NSThread.isMainThread,
+           @"Face sticker file reads must not run on the main thread");
+  NSString *path = url.path.stringByResolvingSymlinksInPath;
+  BOOL isDirectory = NO;
+  if (path.length == 0 ||
+      ![NSFileManager.defaultManager fileExistsAtPath:path
+                                          isDirectory:&isDirectory] ||
+      isDirectory ||
+      ![NSFileManager.defaultManager isReadableFileAtPath:path]) {
+    if (reason) *reason = @"The face sticker is not a readable file";
+    return nil;
+  }
+  NSString *extension = path.pathExtension.lowercaseString;
+  if (!([extension isEqualToString:@"png"] ||
+        [extension isEqualToString:@"jpg"] ||
+        [extension isEqualToString:@"jpeg"] ||
+        [extension isEqualToString:@"gif"])) {
+    if (reason) *reason = @"The face sticker must be a PNG, JPEG or GIF file";
+    return nil;
+  }
+  NSDictionary *attributes =
+      [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+  unsigned long long fileSize = [attributes[NSFileSize] unsignedLongLongValue];
+  if (fileSize == 0) {
+    if (reason) *reason = @"The face sticker file is empty";
+    return nil;
+  }
+  if (fileSize > NosmaiIOSMaxFaceStickerBytes) {
+    if (reason) *reason = @"The face sticker file is larger than 32 MB";
+    return nil;
+  }
+  NSError *readError = nil;
+  NSData *data = [NSData dataWithContentsOfFile:path
+                                        options:NSDataReadingMappedIfSafe
+                                          error:&readError];
+  if (!data || data.length == 0) {
+    if (reason) {
+      *reason = readError.localizedDescription ?: @"Unable to read the face sticker file";
+    }
+    return nil;
+  }
+  return data;
+}
+
+- (void)setFaceStickerAtURI:(NSString *)resourceURI
+                     anchor:(NSString *)anchor
+                    offsetX:(double)offsetX
+                    offsetY:(double)offsetY
+                      scale:(double)scale
+                rotationDeg:(double)rotationDeg
+                    opacity:(double)opacity
+                 completion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (![self ensureInitializedForCompletion:completion]) return;
+    if (!self->_processing || !self->_nativeProcessingActive ||
+        self->_starting || self->_stopping || self->_resumeInProgress ||
+        self->_manualPaused || self->_hostPaused) {
+      completion(nil, NosmaiIOSErrorInvalidState,
+                 @"Start processing and keep the app active before applying a face sticker",
+                 nil);
+      return;
+    }
+    NSNumber *anchorValue =
+        NosmaiIOSFaceStickerAnchors()[[anchor isKindOfClass:NSString.class] ? anchor : @""];
+    if (!anchorValue) {
+      completion(nil, NosmaiIOSErrorInvalidArgument,
+                 [NSString stringWithFormat:@"anchor must be one of %@",
+                  [NosmaiIOSFaceStickerAnchors().allKeys
+                      componentsJoinedByString:@", "]],
+                 nil);
+      return;
+    }
+    NSURL *url = [self strictLocalFileURLFromInput:resourceURI];
+    if (!url) {
+      completion(nil, NosmaiIOSErrorFaceStickerResource,
+                 @"uri must be an absolute local file:// URI without a query or fragment",
+                 nil);
+      return;
+    }
+    SEL applySelector =
+        @selector(setFaceStickerData:anchor:offsetX:offsetY:scale:rotationDeg:opacity:);
+    if (![self faceStickerSupported:applySelector completion:completion]) return;
+
+    [self enqueueEffectWork:^(NosmaiIOSCompletion finish) {
+      if (self->_cleanupInProgress) {
+        finish(nil, NosmaiIOSErrorOperationCancelled,
+               @"Face sticker apply was cancelled by session cleanup", nil);
+        return;
+      }
+      if (!self->_processing || !self->_nativeProcessingActive ||
+          self->_starting || self->_stopping || self->_resumeInProgress ||
+          self->_manualPaused || self->_hostPaused) {
+        finish(nil, NosmaiIOSErrorInvalidState,
+               @"Start processing and keep the app active before applying a face sticker",
+               nil);
+        return;
+      }
+
+      dispatch_async(self->_mediaQueue, ^{
+        @autoreleasepool {
+          NSString *reason = nil;
+          NSData *data = [self faceStickerDataAtURL:url error:&reason];
+          dispatch_async(dispatch_get_main_queue(), ^{
+            if (!data) {
+              NSError *error = NosmaiIOSError(
+                  NosmaiIOSErrorFaceStickerResource,
+                  reason ?: @"Unable to read the face sticker file", nil);
+              finish(nil, NosmaiIOSErrorFaceStickerResource,
+                     error.localizedDescription, error);
+              return;
+            }
+            if (self->_cleanupInProgress) {
+              finish(nil, NosmaiIOSErrorOperationCancelled,
+                     @"Face sticker apply was cancelled by session cleanup",
+                     nil);
+              return;
+            }
+            @try {
+              // NSData, never UIImage: a UIImage would keep only a GIF's first
+              // frame. Placement travels with the upload so the first frame is
+              // already right. The SDK call is synchronous and final.
+              NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+              NosmaiIOSSetFaceStickerDataIMP apply =
+                  (NosmaiIOSSetFaceStickerDataIMP)[sdk methodForSelector:applySelector];
+              BOOL applied = apply(sdk, applySelector, data,
+                                   anchorValue.integerValue, (float)offsetX,
+                                   (float)offsetY, (float)scale,
+                                   (float)rotationDeg, (float)opacity);
+              if (!applied) {
+                finish(nil, NosmaiIOSErrorEffectApply,
+                       @"The native SDK rejected the face sticker image", nil);
+                return;
+              }
+              // Like an authored AR package, the sticker evicts built-in
+              // beauty in the SDK's exclusivity handoff, which invalidates
+              // bridge-only eye-color tracking.
+              [self invalidateBeautyPreparation];
+              self->_eyeColorConfigured = NO;
+              self->_hairColorConfigured = NO;
+              self->_eyeColorIntensity = 0.0;
+              [self emitCurrentPipelineState];
+              finish(@YES, nil, nil, nil);
+            } @catch (NSException *exception) {
+              NSError *error = NosmaiIOSErrorFromException(
+                  exception, NosmaiIOSErrorEffectApply,
+                  @"The face sticker could not be applied");
+              finish(nil, NosmaiIOSErrorEffectApply, error.localizedDescription,
+                     error);
+            }
+          });
+        }
+      });
+    }
+                  completion:completion];
+  });
+}
+
+- (void)setFaceStickerPlacementWithAnchor:(NSString *)anchor
+                                  offsetX:(double)offsetX
+                                  offsetY:(double)offsetY
+                                    scale:(double)scale
+                              rotationDeg:(double)rotationDeg
+                                  opacity:(double)opacity
+                               completion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (![self ensureInitializedForCompletion:completion]) return;
+    NSNumber *anchorValue =
+        NosmaiIOSFaceStickerAnchors()[[anchor isKindOfClass:NSString.class] ? anchor : @""];
+    if (!anchorValue) {
+      completion(nil, NosmaiIOSErrorInvalidArgument,
+                 [NSString stringWithFormat:@"anchor must be one of %@",
+                  [NosmaiIOSFaceStickerAnchors().allKeys
+                      componentsJoinedByString:@", "]],
+                 nil);
+      return;
+    }
+    SEL placementSelector =
+        @selector(setFaceStickerAnchor:offsetX:offsetY:scale:rotationDeg:opacity:);
+    if (![self faceStickerSupported:placementSelector completion:completion]) return;
+    @try {
+      // Cheap by design: the texture stays uploaded, only placement moves. A
+      // no-op inside the SDK when no sticker is active.
+      NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+      NosmaiIOSSetFaceStickerAnchorIMP place =
+          (NosmaiIOSSetFaceStickerAnchorIMP)[sdk methodForSelector:placementSelector];
+      place(sdk, placementSelector, anchorValue.integerValue, (float)offsetX,
+            (float)offsetY, (float)scale, (float)rotationDeg, (float)opacity);
+      completion(nil, nil, nil, nil);
+    } @catch (NSException *exception) {
+      NSError *error = NosmaiIOSErrorFromException(
+          exception, NosmaiIOSErrorEffectState,
+          @"Unable to update the face sticker placement");
+      completion(nil, NosmaiIOSErrorEffectState, error.localizedDescription,
+                 error);
+    }
+  });
+}
+
+- (void)clearFaceStickerWithCompletion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (![self ensureInitializedForCompletion:completion]) return;
+    [self enqueueEffectWork:^(NosmaiIOSCompletion finish) {
+      NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+      if (![sdk respondsToSelector:@selector(clearFaceSticker)] ||
+          ![self faceStickerActive]) {
+        // Nothing to clear: the contract is "resolves when no sticker is active".
+        finish(nil, nil, nil, nil);
+        return;
+      }
+      @try {
+        [sdk clearFaceSticker];
+        [self waitForPipelineUntil:
+                  NSProcessInfo.processInfo.systemUptime +
+                  NosmaiIOSEffectStateTimeoutSeconds
+                               condition:^BOOL(__unused NosmaiPipelineState *state,
+                                               __unused NosmaiSDK *innerSdk) {
+          return ![self faceStickerActive];
+        }
+                              completion:^(id value, NSString *code,
+                                           NSString *message, NSError *error) {
+          if (code) {
+            finish(nil, NosmaiIOSErrorEffectClear, message, error);
+          } else {
+            [self emitCurrentPipelineState];
+            finish(nil, nil, nil, nil);
+          }
+        }];
+      } @catch (NSException *exception) {
+        NSError *error = NosmaiIOSErrorFromException(
+            exception, NosmaiIOSErrorEffectClear,
+            @"Unable to clear the face sticker");
+        finish(nil, NosmaiIOSErrorEffectClear, error.localizedDescription,
+               error);
+      }
+    }
+                  completion:completion];
+  });
+}
+
+#pragma mark - Hair colour
+
+- (BOOL)hairColorActive {
+  NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+  if (![sdk respondsToSelector:@selector(isHairColoringEnabled)]) return NO;
+  @try {
+    return [sdk isHairColoringEnabled];
+  } @catch (__unused NSException *exception) {
+    return NO;
+  }
+}
+
+- (BOOL)hairColorSupported:(SEL)selector
+                completion:(NosmaiIOSCompletion)completion {
+  if ([[NosmaiSDK sharedInstance] respondsToSelector:selector]) return YES;
+  completion(nil, NosmaiIOSErrorHairColorUnsupported,
+             @"The installed Nosmai iOS SDK does not support hair coloring",
+             nil);
+  return NO;
+}
+
+- (void)setHairColorRed:(double)red
+                   green:(double)green
+                    blue:(double)blue
+               intensity:(double)intensity
+              completion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (!NosmaiIOSFiniteInRange(red, 0.0, 1.0) ||
+        !NosmaiIOSFiniteInRange(green, 0.0, 1.0) ||
+        !NosmaiIOSFiniteInRange(blue, 0.0, 1.0) ||
+        !NosmaiIOSFiniteInRange(intensity, 0.0, 1.0)) {
+      completion(nil, NosmaiIOSErrorInvalidArgument,
+                 @"Hair color and intensity values must be between zero and one",
+                 nil);
+      return;
+    }
+    if (![self hairColorSupported:@selector(setHairColoringEnabled:)
+                       completion:completion]) {
+      return;
+    }
+    [self enqueueVisualMutationRequiringBeauty:YES
+                                       advanced:NO
+                                       keepAlive:nil
+                                        mutation:^(__unused NosmaiEffectsEngine *effects,
+                                                   NosmaiSDK *sdk) {
+      // The hair model is built lazily on the SDK's own worker; enabling
+      // never blocks the main thread.
+      [sdk setHairColoringEnabled:YES];
+      [sdk setHairColorWithRed:(float)red green:(float)green blue:(float)blue];
+      [sdk setHairColorIntensity:(float)intensity];
+    }
+                                      afterFence:^{
+      self->_hairColorConfigured = YES;
+    }
+                                      completion:completion];
+  });
+}
+
+- (void)setHairColorIntensity:(double)intensity
+                     completion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (!NosmaiIOSFiniteInRange(intensity, 0.0, 1.0)) {
+      completion(nil, NosmaiIOSErrorInvalidArgument,
+                 @"Hair-color intensity must be between zero and one", nil);
+      return;
+    }
+    if (![self hairColorSupported:@selector(setHairColorIntensity:)
+                       completion:completion]) {
+      return;
+    }
+    if (![self ensureVisualMutationReadyForCompletion:completion] ||
+        ![self ensureVisualFeaturesRequiringBeauty:YES
+                                          advanced:NO
+                                        completion:completion]) {
+      return;
+    }
+    [self enqueueEffectWork:^(NosmaiIOSCompletion finish) {
+      if (![self ensureVisualMutationReadyForCompletion:finish] ||
+          ![self ensureVisualFeaturesRequiringBeauty:YES
+                                            advanced:NO
+                                          completion:finish]) {
+        return;
+      }
+      // Checked at FIFO turn so a queued setHairColor lands first.
+      if (!self->_hairColorConfigured && ![self hairColorActive]) {
+        finish(nil, NosmaiIOSErrorInvalidState,
+               @"Set a hair color before changing its intensity", nil);
+        return;
+      }
+      [self performVisualMutationAtFIFOTurnRequiringBeauty:YES
+                                                  advanced:NO
+                                                  keepAlive:nil
+                                                   mutation:^(__unused NosmaiEffectsEngine *effects,
+                                                              NosmaiSDK *sdk) {
+        [sdk setHairColorIntensity:(float)intensity];
+      }
+                                                afterFence:nil
+                                                    finish:finish];
+    }
+                    completion:completion];
+  });
+}
+
+- (void)removeHairColorWithCompletion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    [self enqueueVisualMutationRequiringBeauty:NO
+                                       advanced:NO
+                                       keepAlive:nil
+                                        mutation:^(__unused NosmaiEffectsEngine *effects,
+                                                   NosmaiSDK *sdk) {
+      // Nothing could have been enabled on a binary without the selector.
+      if ([sdk respondsToSelector:@selector(setHairColoringEnabled:)]) {
+        [sdk setHairColoringEnabled:NO];
+      }
+    }
+                                      afterFence:^{
+      self->_hairColorConfigured = NO;
+    }
+                                      completion:completion];
+  });
+}
+
+- (void)isHairColorActiveWithCompletion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (![self ensureInitializedForCompletion:completion]) return;
+    completion(@([self hairColorActive]), nil, nil, nil);
+  });
+}
+
+#pragma mark - Face sticker query
+
+- (void)isFaceStickerActiveWithCompletion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (![self ensureInitializedForCompletion:completion]) return;
+    completion(@([self faceStickerActive]), nil, nil, nil);
+  });
+}
+
 - (void)clearAREffectWithCompletion:(NosmaiIOSCompletion)completion {
   NosmaiIOSRunOnMain(^{
     if (![self ensureInitializedForCompletion:completion]) return;
@@ -3683,7 +4097,9 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
                   NosmaiIOSEffectStateTimeoutSeconds
                                condition:^BOOL(NosmaiPipelineState *state,
                                                __unused NosmaiSDK *sdk) {
-          return state.activeEffectPath.length == 0;
+          // A face sticker holds this slot with a nil path; wait for it too.
+          return state.activeEffectPath.length == 0 &&
+                 ![self faceStickerActive];
         }
                               completion:finish];
       } @catch (NSException *exception) {
@@ -3703,6 +4119,7 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
     if (![self ensureInitializedForCompletion:completion]) return;
     [self enqueueEffectWork:^(NosmaiIOSCompletion finish) {
       @try {
+        [self invalidateBeautyPreparation];
         [[NosmaiCore shared].effects clearAll];
         [self waitForPipelineUntil:
                   NSProcessInfo.processInfo.systemUptime +
@@ -3712,13 +4129,15 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
           return state.activeFilterPath.length == 0 &&
                  state.activeEffectPath.length == 0 &&
                  state.activeBackgroundPackagePath.length == 0 &&
-                 !state.backgroundActive && ![sdk hasActiveBuiltInFilters];
+                 !state.backgroundActive && ![sdk hasActiveBuiltInFilters] &&
+                 ![self faceStickerActive];
         }
                               completion:^(id value, NSString *code,
                                            NSString *message,
                                            NSError *waitError) {
           if (!code) {
             self->_eyeColorConfigured = NO;
+            self->_hairColorConfigured = NO;
             self->_eyeColorIntensity = 0.0;
             [self emitCurrentPipelineState];
           }
@@ -3791,11 +4210,98 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
   });
 }
 
+- (void)invalidateBeautyPreparation {
+  _beautyPreparationGeneration.fetch_add(1);
+  _beautyPrepared = NO;
+  _beautyPreparing = NO;
+  NSArray *waiting = [_beautyPreparationCompletions copy];
+  [_beautyPreparationCompletions removeAllObjects];
+  for (NosmaiIOSCompletion callback in waiting) callback(@NO, nil, nil, nil);
+}
+
+- (void)prepareBeautyFiltersWithCompletion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (![self ensureInitializedForCompletion:completion]) return;
+    if (!self->_processing || !self->_nativeProcessingActive || !self->_readyDelivered || self->_cleanupInProgress || self->_stopping || self->_manualPaused || self->_hostPaused) { completion(@NO, nil, nil, nil); return; }
+    if (self->_beautyPrepared) { completion(@YES, nil, nil, nil); return; }
+    NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+    if (![sdk respondsToSelector:@selector(warmUpMakeup)]) { completion(nil, @"E_SDK_UPGRADE_REQUIRED", @"Use the current native beauty SDK", nil); return; }
+    [self->_beautyPreparationCompletions addObject:[completion copy]];
+    if (self->_beautyPreparing) return;
+    self->_beautyPreparing = YES;
+    uint64_t generation = self->_beautyPreparationGeneration.load();
+    dispatch_async(self->_beautyPreparationQueue, ^{
+      @autoreleasepool {
+        if (generation != self->_beautyPreparationGeneration.load()) return;
+        BOOL ready = NO;
+        NSError *error = nil;
+        @try { ready = [sdk warmUpMakeup]; }
+        @catch (NSException *exception) { error = NosmaiIOSErrorFromException(exception, NosmaiIOSErrorVisualControl, @"Unable to prepare beauty resources"); }
+        NosmaiIOSRunOnMain(^{
+          if (generation != self->_beautyPreparationGeneration.load()) return;
+          self->_beautyPreparing = NO;
+          self->_beautyPrepared = ready && error == nil && self->_processing && self->_nativeProcessingActive && !self->_cleanupInProgress && !self->_stopping;
+          NSArray *waiting = [self->_beautyPreparationCompletions copy];
+          [self->_beautyPreparationCompletions removeAllObjects];
+          for (NosmaiIOSCompletion callback in waiting) callback(error ? nil : @(self->_beautyPrepared), error ? NosmaiIOSErrorVisualControl : nil, error.localizedDescription, error);
+        });
+      }
+    });
+  });
+}
+
+- (void)isBeautyPreparedWithCompletion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{ completion(@(self->_initialized && self->_processing && self->_nativeProcessingActive && self->_readyDelivered && !self->_cleanupInProgress && !self->_stopping && !self->_hostPaused && !self->_manualPaused && self->_beautyPrepared), nil, nil, nil); });
+}
+
+- (void)setBeautyVisible:(BOOL)visible completion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    [self enqueueVisualMutationRequiringBeauty:NO advanced:NO keepAlive:nil mutation:^(__unused NosmaiEffectsEngine *effects, NosmaiSDK *sdk) { [sdk setBeautyVisible:visible]; } afterFence:nil completion:completion];
+  });
+}
+
+- (void)isBeautyVisibleWithCompletion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (![self ensureInitializedForCompletion:completion]) return;
+    completion(@([[NosmaiSDK sharedInstance] isBeautyVisible]), nil, nil, nil);
+  });
+}
+
+- (void)applyContour:(double)contour highlighter:(double)highlighter completion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (!NosmaiIOSFiniteInRange(contour, 0, 2) || !NosmaiIOSFiniteInRange(highlighter, 0, 2)) { completion(nil, NosmaiIOSErrorInvalidArgument, @"Contour/highlighter strengths must be 0..2", nil); return; }
+    [self enqueueVisualMutationRequiringBeauty:(contour != 0 || highlighter != 0) advanced:NO keepAlive:nil mutation:^(__unused NosmaiEffectsEngine *effects, NosmaiSDK *sdk) { [sdk applyFaceContour:(float)contour highlighter:(float)highlighter]; } afterFence:nil completion:completion];
+  });
+}
+
+- (void)applyFoundation:(double)coverage red:(double)red green:(double)green blue:(double)blue completion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (!NosmaiIOSFiniteInRange(coverage, 0, 1) || !NosmaiIOSFiniteInRange(red, 0, 1) || !NosmaiIOSFiniteInRange(green, 0, 1) || !NosmaiIOSFiniteInRange(blue, 0, 1)) { completion(nil, NosmaiIOSErrorInvalidArgument, @"Foundation coverage/RGB must be 0..1", nil); return; }
+    [self enqueueVisualMutationRequiringBeauty:(coverage != 0) advanced:NO keepAlive:nil mutation:^(__unused NosmaiEffectsEngine *effects, NosmaiSDK *sdk) { if (coverage == 0) [sdk removeFoundation]; else [sdk applyFoundation:(float)coverage r:(float)red g:(float)green b:(float)blue]; } afterFence:nil completion:completion];
+  });
+}
+
+- (void)getMakeupColorsOfType:(NSString *)type completion:(NosmaiIOSCompletion)completion {
+  NosmaiIOSRunOnMain(^{
+    if (![self ensureInitializedForCompletion:completion]) return;
+    NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+    NSArray<NosmaiMakeupColor *> *palette = nil;
+    if ([type isEqualToString:@"lipstick"]) palette = sdk.lipstickColors;
+    else if ([type isEqualToString:@"eyeshadow"]) palette = sdk.eyeshadowColors;
+    else if ([type isEqualToString:@"blusher"]) palette = sdk.blusherColors;
+    else if ([type isEqualToString:@"eyebrow"]) palette = sdk.eyebrowColors;
+    else { completion(nil, NosmaiIOSErrorInvalidArgument, @"This makeup layer has no color palette", nil); return; }
+    NSMutableArray *colors = [NSMutableArray array];
+    for (NosmaiMakeupColor *color in palette) [colors addObject:@{@"name":color.name, @"red":@(color.r), @"green":@(color.g), @"blue":@(color.b)}];
+    completion(@{@"colors":colors}, nil, nil, nil);
+  });
+}
+
 - (void)setBeautyControl:(NSString *)control
                     value:(double)value
                completion:(NosmaiIOSCompletion)completion {
   NosmaiIOSRunOnMain(^{
-    BOOL supported = [control isEqualToString:@"skinSmoothing"] ||
+    BOOL supported = [control isEqualToString:@"freckles"] || [control isEqualToString:@"darkCircle"] || [control isEqualToString:@"skinSmoothing"] ||
         [control isEqualToString:@"skinWhitening"] ||
         [control isEqualToString:@"teethWhitening"];
     if (!supported || !NosmaiIOSFiniteInRange(value, 0.0, 1.0)) {
@@ -3803,20 +4309,19 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
                  @"Beauty control and value are invalid", nil);
       return;
     }
-    [self enqueueVisualMutationRequiringBeauty:YES
+    [self enqueueVisualMutationRequiringBeauty:!(value == 0 && ([control isEqualToString:@"freckles"] || [control isEqualToString:@"darkCircle"]))
                                        advanced:NO
                                        keepAlive:nil
                                         mutation:^(NosmaiEffectsEngine *effects,
-                                                   __unused NosmaiSDK *sdk) {
-      if ([control isEqualToString:@"skinSmoothing"]) {
+                                                   NosmaiSDK *sdk) {
+      if ([control isEqualToString:@"freckles"]) { [sdk applyFreckles:(float)value]; }
+      else if ([control isEqualToString:@"darkCircle"]) { [sdk applyDarkCircleCorrector:(float)value]; }
+      else if ([control isEqualToString:@"skinSmoothing"]) {
         [effects applySkinSmoothing:(float)value];
       } else if ([control isEqualToString:@"skinWhitening"]) {
         [effects applySkinWhitening:(float)value];
       } else {
-        // The Nosmai iOS 3.0.4 compatibility line still applies a legacy /10 conversion
-        // internally despite documenting this API as [0,1]. Compensate here
-        // so the React Native contract remains a real [0,1] intensity.
-        [effects applyTeethWhitening:(float)(value * 10.0)];
+        [effects applyTeethWhitening:(float)value];
       }
     }
                                       afterFence:nil
@@ -3836,12 +4341,18 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
       [effects applySkinSmoothing:0.0f];
       [effects applySkinWhitening:0.0f];
       [effects applyTeethWhitening:0.0f];
+      [sdk applyFreckles:0.0f];
+      [sdk applyDarkCircleCorrector:0.0f];
+      [sdk removeFoundation];
+      [sdk applyFaceContour:0.0f highlighter:0.0f];
+      [sdk setHairColoringEnabled:NO];
       [sdk removeAllMakeup];
       [effects clearReshapes];
       [sdk removeEyeColoring];
     }
                                       afterFence:^{
       self->_eyeColorConfigured = NO;
+      self->_hairColorConfigured = NO;
       self->_eyeColorIntensity = 0.0;
     }
                                       completion:completion];
@@ -3854,41 +4365,53 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
                      green:(double)green
                       blue:(double)blue
                  intensity:(double)intensity
+           useDefaultColor:(BOOL)useDefaultColor
                 completion:(NosmaiIOSCompletion)completion {
   NosmaiIOSRunOnMain(^{
     NSInteger nativeStyle = 0;
+    const double maximum = ([makeupType isEqualToString:@"lipstick"] || [makeupType isEqualToString:@"blusher"]) ? 2.0 : 1.0;
     if (!NosmaiIOSMakeupStyle(makeupType, style, &nativeStyle) ||
         !NosmaiIOSFiniteInRange(red, 0.0, 1.0) ||
         !NosmaiIOSFiniteInRange(green, 0.0, 1.0) ||
         !NosmaiIOSFiniteInRange(blue, 0.0, 1.0) ||
-        !NosmaiIOSFiniteInRange(intensity, 0.0, 1.0)) {
+        !NosmaiIOSFiniteInRange(intensity, 0.0, maximum)) {
       completion(nil, NosmaiIOSErrorInvalidArgument,
                  @"Makeup type, style, color, or intensity is invalid", nil);
       return;
     }
 
+    double r = red, g = green, b = blue;
+    if (useDefaultColor && ![makeupType isEqualToString:@"lipstick"]) {
+      const double shadow[3][3] = {{43.0/255,28.0/255,15.0/255},{.65,.45,.25},{.38,.30,.25}};
+      const double blush[3][3] = {{1,169.0/255,153.0/255},{157.0/255,63.0/255,37.0/255},{198.0/255,114.0/255,124.0/255}};
+      const double brow[3][3] = {{.35,.25,.20},{.20,.15,.12},{.30,.20,.15}};
+      NSInteger index = MIN(nativeStyle, 2);
+      const double *rgb = [makeupType isEqualToString:@"eyeshadow"] ? shadow[index] : [makeupType isEqualToString:@"blusher"] ? blush[index] : brow[index];
+      r = rgb[0]; g = rgb[1]; b = rgb[2];
+    }
     [self enqueueVisualMutationRequiringBeauty:YES
                                        advanced:NO
                                        keepAlive:nil
                                         mutation:^(__unused NosmaiEffectsEngine *effects,
                                                    NosmaiSDK *sdk) {
       if ([makeupType isEqualToString:@"lipstick"]) {
-        [sdk applyLipstickWithStyle:(NosmaiLipstickStyle)nativeStyle
-                                  r:(float)red
-                                  g:(float)green
-                                  b:(float)blue];
+        if (useDefaultColor) [sdk applyLipstickWithStyle:(NosmaiLipstickStyle)nativeStyle];
+        else [sdk applyLipstickWithStyle:(NosmaiLipstickStyle)nativeStyle
+                                  r:(float)r
+                                  g:(float)g
+                                  b:(float)b];
         [sdk setLipstickIntensity:(float)intensity];
       } else if ([makeupType isEqualToString:@"eyeshadow"]) {
         [sdk applyEyeshadowWithStyle:(NosmaiEyeshadowStyle)nativeStyle
-                                   r:(float)red
-                                   g:(float)green
-                                   b:(float)blue];
+                                   r:(float)r
+                                   g:(float)g
+                                   b:(float)b];
         [sdk setEyeshadowIntensity:(float)intensity];
       } else if ([makeupType isEqualToString:@"blusher"]) {
         [sdk applyBlusherWithStyle:(NosmaiBlusherStyle)nativeStyle
-                                 r:(float)red
-                                 g:(float)green
-                                 b:(float)blue];
+                                 r:(float)r
+                                 g:(float)g
+                                 b:(float)b];
         [sdk setBlusherIntensity:(float)intensity];
       } else if ([makeupType isEqualToString:@"eyelash"]) {
         // Eyelashes have no color parameter in the iOS SDK by design.
@@ -3896,9 +4419,9 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
         [sdk setEyelashIntensity:(float)intensity];
       } else {
         [sdk applyEyebrowWithStyle:(NosmaiEyebrowStyle)nativeStyle
-                                 r:(float)red
-                                 g:(float)green
-                                 b:(float)blue];
+                                 r:(float)r
+                                 g:(float)g
+                                 b:(float)b];
         [sdk setEyebrowIntensity:(float)intensity];
       }
     }
@@ -3912,7 +4435,7 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
                         completion:(NosmaiIOSCompletion)completion {
   NosmaiIOSRunOnMain(^{
     if (!NosmaiIOSIsMakeupType(makeupType) ||
-        !NosmaiIOSFiniteInRange(intensity, 0.0, 1.0)) {
+        !NosmaiIOSFiniteInRange(intensity, 0.0, ([makeupType isEqualToString:@"lipstick"] || [makeupType isEqualToString:@"blusher"]) ? 2.0 : 1.0)) {
       completion(nil, NosmaiIOSErrorInvalidArgument,
                  @"Makeup type or intensity is invalid", nil);
       return;
@@ -4208,6 +4731,7 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
     }
                                       afterFence:^{
       self->_eyeColorConfigured = NO;
+      self->_hairColorConfigured = NO;
       self->_eyeColorIntensity = 0.0;
     }
                                       completion:completion];
@@ -4257,7 +4781,7 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
       valid = NosmaiIOSFiniteInRange(value1, -1.0, 1.0) &&
           value2 == 0.0 && value3 == 0.0;
     } else if ([control isEqualToString:@"contrast"]) {
-      valid = NosmaiIOSFiniteInRange(value1, 0.0, 2.0) &&
+      valid = NosmaiIOSFiniteInRange(value1, 0.0, 4.0) &&
           value2 == 0.0 && value3 == 0.0;
     } else if ([control isEqualToString:@"rgb"]) {
       valid = NosmaiIOSFiniteInRange(value1, 0.0, 2.0) &&
@@ -6408,6 +6932,7 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
 }
 
 - (void)invalidateProcessedFrameReadiness {
+  [self invalidateBeautyPreparation];
   _readyGeneration++;
   _processedFrameReadinessArmed = NO;
   _processedFrameReadinessArmedAtomic.store(false,
@@ -6471,8 +6996,15 @@ static UIImage *NosmaiIOSImageByMirroringHorizontally(UIImage *image) {
              fallbackPath:state.activeEffectPath
              fallbackType:effectType] ?: NSNull.null;
   BOOL hasTrackedEyeColor = _eyeColorConfigured;
+  BOOL hairColorActive = [self hairColorActive];
   map[@"hasBuiltInBeauty"] =
-      @([sdk hasActiveBuiltInFilters] || hasTrackedEyeColor);
+      @([sdk hasActiveBuiltInFilters] || hasTrackedEyeColor || hairColorActive);
+  // Hair colouring is built-in beauty (never the AR slot); surfaced on its own
+  // so a host can keep a shade picker in sync.
+  map[@"isHairColorActive"] = @(hairColorActive);
+  // A sticker occupies the AR slot while activeEffectPath stays nil, so the
+  // slot cannot be judged from the path alone.
+  map[@"isFaceStickerActive"] = @([self faceStickerActive]);
   if (hasTrackedEyeColor) {
     map[@"hasBeautyEffect"] = @YES;
   }

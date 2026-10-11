@@ -349,14 +349,6 @@ static NosmaiIOSCompletion NosmaiIOSPromiseCompletion(
                   completion:NosmaiIOSPromiseCompletion(resolve, reject)];
 }
 
-- (void)getDebugFilters:(NSString *_Nullable)packageType
-                  resolve:(RCTPromiseResolveBlock)resolve
-                   reject:(RCTPromiseRejectBlock)reject {
-  [[NosmaiIOSController shared]
-      getDebugFiltersOfType:packageType
-                  completion:NosmaiIOSPromiseCompletion(resolve, reject)];
-}
-
 - (void)isCloudFilterEnabled:(RCTPromiseResolveBlock)resolve
                        reject:(RCTPromiseRejectBlock)reject {
   [[NosmaiIOSController shared]
@@ -438,6 +430,67 @@ static NosmaiIOSCompletion NosmaiIOSPromiseCompletion(
           NosmaiIOSPromiseCompletion(resolve, reject)];
 }
 
+- (void)prepareBeautyFilters:(RCTPromiseResolveBlock)resolve
+                         reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared] prepareBeautyFiltersWithCompletion:
+      NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)isBeautyPrepared:(RCTPromiseResolveBlock)resolve
+                    reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared] isBeautyPreparedWithCompletion:
+      NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)setBeautyVisible:(BOOL)visible
+                     resolve:(RCTPromiseResolveBlock)resolve
+                      reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared] setBeautyVisible:visible
+      completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)isBeautyVisible:(RCTPromiseResolveBlock)resolve
+                   reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared] isBeautyVisibleWithCompletion:
+      NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)applyContourHighlighter:(double)contour
+                     highlighter:(double)highlighter
+                         resolve:(RCTPromiseResolveBlock)resolve
+                          reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared] applyContour:contour
+      highlighter:highlighter completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)applyFoundation:(double)coverage
+                    red:(double)red
+                  green:(double)green
+                   blue:(double)blue
+                resolve:(RCTPromiseResolveBlock)resolve
+                 reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared] applyFoundation:coverage
+      red:red green:green blue:blue
+      completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)getMakeupColors:(NSString *)makeupType
+                resolve:(RCTPromiseResolveBlock)resolve
+                 reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared] getMakeupColorsOfType:makeupType
+      completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)applyMakeupDefault:(NSString *)makeupType
+                     style:(NSString *)style
+                 intensity:(double)intensity
+                   resolve:(RCTPromiseResolveBlock)resolve
+                    reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared] applyMakeupOfType:makeupType
+      style:style red:0 green:0 blue:0 intensity:intensity useDefaultColor:YES
+      completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
 - (void)setBeautyValue:(NSString *)control
                  value:(double)value
                resolve:(RCTPromiseResolveBlock)resolve
@@ -469,6 +522,7 @@ static NosmaiIOSCompletion NosmaiIOSPromiseCompletion(
                    green:green
                     blue:blue
                intensity:intensity
+      useDefaultColor:NO
               completion:NosmaiIOSPromiseCompletion(resolve, reject)];
 }
 
@@ -556,6 +610,42 @@ static NosmaiIOSCompletion NosmaiIOSPromiseCompletion(
                                                                 reject)];
 }
 
+- (void)setHairColor:(double)red
+               green:(double)green
+                blue:(double)blue
+           intensity:(double)intensity
+             resolve:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared]
+      setHairColorRed:red
+                 green:green
+                  blue:blue
+             intensity:intensity
+            completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)setHairColorIntensity:(double)intensity
+                      resolve:(RCTPromiseResolveBlock)resolve
+                       reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared]
+      setHairColorIntensity:intensity
+                   completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)removeHairColor:(RCTPromiseResolveBlock)resolve
+                 reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared]
+      removeHairColorWithCompletion:NosmaiIOSPromiseCompletion(resolve,
+                                                               reject)];
+}
+
+- (void)isHairColorActive:(RCTPromiseResolveBlock)resolve
+                   reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared]
+      isHairColorActiveWithCompletion:NosmaiIOSPromiseCompletion(resolve,
+                                                                 reject)];
+}
+
 - (void)setColorAdjustment:(NSString *)control
                     value1:(double)value1
                     value2:(double)value2
@@ -595,6 +685,59 @@ static NosmaiIOSCompletion NosmaiIOSPromiseCompletion(
                    alpha:alpha
             blurStrength:blurStrength
               completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)setFaceSticker:(NSString *)resourceUri
+                anchor:(NSString *)anchor
+               offsetX:(double)offsetX
+               offsetY:(double)offsetY
+                 scale:(double)scale
+           rotationDeg:(double)rotationDeg
+               opacity:(double)opacity
+               resolve:(RCTPromiseResolveBlock)resolve
+                reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared]
+      setFaceStickerAtURI:resourceUri
+                   anchor:anchor
+                  offsetX:offsetX
+                  offsetY:offsetY
+                    scale:scale
+              rotationDeg:rotationDeg
+                  opacity:opacity
+               completion:NosmaiIOSPromiseCompletion(resolve, reject)];
+}
+
+- (void)setFaceStickerPlacement:(NSString *)anchor
+                        offsetX:(double)offsetX
+                        offsetY:(double)offsetY
+                          scale:(double)scale
+                    rotationDeg:(double)rotationDeg
+                        opacity:(double)opacity
+                        resolve:(RCTPromiseResolveBlock)resolve
+                         reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared]
+      setFaceStickerPlacementWithAnchor:anchor
+                                offsetX:offsetX
+                                offsetY:offsetY
+                                  scale:scale
+                            rotationDeg:rotationDeg
+                                opacity:opacity
+                             completion:NosmaiIOSPromiseCompletion(resolve,
+                                                                   reject)];
+}
+
+- (void)clearFaceSticker:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared]
+      clearFaceStickerWithCompletion:NosmaiIOSPromiseCompletion(resolve,
+                                                                reject)];
+}
+
+- (void)isFaceStickerActive:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  [[NosmaiIOSController shared]
+      isFaceStickerActiveWithCompletion:NosmaiIOSPromiseCompletion(resolve,
+                                                                   reject)];
 }
 
 - (void)clearBackground:(RCTPromiseResolveBlock)resolve

@@ -81,6 +81,7 @@ const requiredFiles = [
   'android/consumer-rules.pro',
   'android/src/main/AndroidManifest.xml',
   'android/src/main/java/com/nosmai/camerasdk/reactnative/NosmaiAndroidCapture.kt',
+  'android/src/main/java/com/nosmai/camerasdk/reactnative/NosmaiBeautyPreparation.kt',
   'android/src/main/java/com/nosmai/camerasdk/reactnative/NosmaiAndroidController.kt',
   'android/src/main/java/com/nosmai/camerasdk/reactnative/NosmaiEffectParameterAdapter.kt',
   'android/src/main/java/com/nosmai/camerasdk/reactnative/NosmaiAndroidFrameStream.kt',

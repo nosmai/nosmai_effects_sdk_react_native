@@ -1,9 +1,30 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 - 2026-10-12
 
+- Synced the production beauty APIs with Flutter: independent contour and
+  highlighter, XYZ freckles quantity, seven foundation shades/custom RGB,
+  scoped dark-circle correction, optional makeup defaults, four colour palettes,
+  and lipstick/blusher strength up to 2. Existing single-value contour/dark-circle
+  methods remain supported.
+- Added beauty Hide/Show and asynchronous preparation/status with session
+  invalidation, plus example sliders, shade swatches and readiness controls.
+- Requires native SDK 3.0.6 or newer with these production beauty APIs.
 - Added Android `armeabi-v7a` support alongside the existing `arm64-v8a`
   configuration for native, Expo, and example builds.
+- Added face stickers: `setFaceSticker` pins a PNG, JPEG or animated GIF file
+  to the tracked face, `setFaceStickerPlacement` moves it live,
+  `clearFaceSticker` removes it, and `isFaceStickerActive` plus
+  `NosmaiActiveEffects.isFaceStickerActive` report the AR slot while
+  `activeEffectPath` stays undefined. `clearAREffect` and `clearAll` now wait
+  for a sticker to be gone. Requires a native SDK release with the face-sticker
+  API; an older iOS pod rejects with `E_FACE_STICKER_UNSUPPORTED`.
+- Added hair colouring: `setHairColor`, `setHairColorIntensity`,
+  `removeHairColor`, `isHairColorActive` and
+  `NosmaiActiveEffects.isHairColorActive`. A built-in beauty effect driven by
+  on-device hair segmentation; `clearBeauty` and `clearAll` remove it. Requires
+  a native SDK release with the hair-colour API; an older iOS pod rejects with
+  `E_HAIR_COLOR_UNSUPPORTED`.
 
 ## 1.0.0
 

@@ -37,7 +37,6 @@ jest.mock('../NativeNosmaiCameraSdk', () => ({
     resumeGame: jest.fn(),
     restartGame: jest.fn(),
     getLocalFilters: jest.fn(),
-    getDebugFilters: jest.fn(),
     isCloudFilterEnabled: jest.fn(),
     getCloudFilters: jest.fn(),
     downloadCloudFilter: jest.fn(),
@@ -48,6 +47,14 @@ jest.mock('../NativeNosmaiCameraSdk', () => ({
     clearAll: jest.fn(),
     isBeautyEffectEnabled: jest.fn(),
     isAdvancedFiltersEnabled: jest.fn(),
+    prepareBeautyFilters: jest.fn(),
+    isBeautyPrepared: jest.fn(),
+    setBeautyVisible: jest.fn(),
+    isBeautyVisible: jest.fn(),
+    applyContourHighlighter: jest.fn(),
+    applyFoundation: jest.fn(),
+    getMakeupColors: jest.fn(),
+    applyMakeupDefault: jest.fn(),
     setBeautyValue: jest.fn(),
     clearBeauty: jest.fn(),
     applyMakeup: jest.fn(),
@@ -61,10 +68,18 @@ jest.mock('../NativeNosmaiCameraSdk', () => ({
     setEyeColorIntensity: jest.fn(),
     removeEyeColor: jest.fn(),
     isEyeColorActive: jest.fn(),
+    setHairColor: jest.fn(),
+    setHairColorIntensity: jest.fn(),
+    removeHairColor: jest.fn(),
+    isHairColorActive: jest.fn(),
     setColorAdjustment: jest.fn(),
     resetColorAdjustments: jest.fn(),
     setBackground: jest.fn(),
     clearBackground: jest.fn(),
+    setFaceSticker: jest.fn(),
+    setFaceStickerPlacement: jest.fn(),
+    clearFaceSticker: jest.fn(),
+    isFaceStickerActive: jest.fn(),
     onActiveEffectsChanged: jest.fn(),
     onLicenseStatusChanged: jest.fn(),
     onError: jest.fn(),
@@ -646,26 +661,6 @@ describe('NosmaiCameraSdk JavaScript contract', () => {
     expect(nativeMock.getLocalFilters).toHaveBeenCalledWith('beauty_effect');
   });
 
-  it('requests and normalizes bundled debug games', async () => {
-    nativeMock.getDebugFilters.mockResolvedValue({
-      items: [
-        {
-          id: 'dart-strike',
-          displayName: 'Dart Strike',
-          path: '/cache/dart_strike.nosmai',
-          filterType: 'game',
-        },
-      ],
-    });
-
-    await expect(
-      NosmaiCameraSdk.getDebugFilters('game')
-    ).resolves.toMatchObject([
-      { displayName: 'Dart Strike', packageType: 'game' },
-    ]);
-    expect(nativeMock.getDebugFilters).toHaveBeenCalledWith('game');
-  });
-
   it('passes an installed catalog asset path back to apply unchanged', async () => {
     const assetPath = 'Nosmai_Filters/local-look/local-look.nosmai';
     nativeMock.getLocalFilters.mockResolvedValue({
@@ -924,14 +919,23 @@ describe('NosmaiCameraSdk JavaScript contract', () => {
 
     await NosmaiCameraSdk.setSkinSmoothing(0.25);
     await NosmaiCameraSdk.setSkinWhitening(0.5);
+    await NosmaiCameraSdk.setContourHighlighter(0.6);
+    await NosmaiCameraSdk.setDarkCircleCorrector(0.4);
     await NosmaiCameraSdk.setTeethWhitening(0.75);
 
     expect(nativeMock.setBeautyValue.mock.calls).toEqual([
       ['skinSmoothing', 0.25],
       ['skinWhitening', 0.5],
+      ['darkCircle', 0.4],
       ['teethWhitening', 0.75],
     ]);
+    expect(nativeMock.applyContourHighlighter).toHaveBeenCalledWith(0.6, 0.6);
     await expect(NosmaiCameraSdk.setSkinSmoothing(1.01)).rejects.toMatchObject({
+      code: NosmaiErrorCode.invalidArgument,
+    });
+    await expect(
+      NosmaiCameraSdk.setDarkCircleCorrector(-0.01)
+    ).rejects.toMatchObject({
       code: NosmaiErrorCode.invalidArgument,
     });
   });
@@ -972,6 +976,261 @@ describe('NosmaiCameraSdk JavaScript contract', () => {
     ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
   });
 
+  it('uses production default colours without changing custom RGB calls', async () => {
+    for (const type of [
+      'lipstick',
+      'eyeshadow',
+      'blusher',
+      'eyebrow',
+    ] as const) {
+      await NosmaiCameraSdk.applyMakeup({ type, style: 'natural' });
+      expect(nativeMock.applyMakeupDefault).toHaveBeenCalledWith(
+        type,
+        'natural',
+        1
+      );
+    }
+    await NosmaiCameraSdk.applyMakeup({ type: 'eyelash', style: 'natural' });
+    expect(nativeMock.applyMakeup).toHaveBeenCalledWith(
+      'eyelash',
+      'natural',
+      0,
+      0,
+      0,
+      1
+    );
+    await NosmaiCameraSdk.applyMakeup({
+      type: 'eyebrow',
+      style: 'bold',
+      color: { red: 0.7, green: 0.4, blue: 0.2, alpha: 0 },
+      intensity: 0.8,
+    });
+    expect(nativeMock.applyMakeup).toHaveBeenCalledWith(
+      'eyebrow',
+      'bold',
+      0.7,
+      0.4,
+      0.2,
+      0.8
+    );
+    await expect(
+      NosmaiCameraSdk.applyMakeup({ type: 'lipstick', style: 'test' } as never)
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+  });
+
+  it('accepts 2x lipstick/blusher strength but keeps other layers at 1x', async () => {
+    for (const type of ['lipstick', 'blusher'] as const) {
+      await NosmaiCameraSdk.applyMakeup({
+        type,
+        style: 'natural',
+        intensity: 2,
+      });
+      await NosmaiCameraSdk.setMakeupIntensity(type, 2);
+      expect(nativeMock.setMakeupIntensity).toHaveBeenCalledWith(type, 2);
+    }
+    for (const type of ['eyebrow', 'eyeshadow', 'eyelash'] as const) {
+      await expect(
+        NosmaiCameraSdk.setMakeupIntensity(type, 1.01)
+      ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    }
+    await expect(
+      NosmaiCameraSdk.applyMakeup({
+        type: 'eyeshadow',
+        style: 'shimmer',
+        intensity: 1.01,
+      })
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+  });
+
+  it('normalizes all four native palettes without replacing their colours', async () => {
+    nativeMock.getMakeupColors.mockResolvedValue({
+      colors: [{ name: 'Rose', red: 0.88, green: 0.5, blue: 0.54 }],
+    });
+    for (const getter of [
+      NosmaiCameraSdk.getLipstickColors,
+      NosmaiCameraSdk.getEyeshadowColors,
+      NosmaiCameraSdk.getBlusherColors,
+      NosmaiCameraSdk.getEyebrowColors,
+    ]) {
+      await expect(getter()).resolves.toEqual([
+        { name: 'Rose', red: 0.88, green: 0.5, blue: 0.54, alpha: 1 },
+      ]);
+    }
+    expect(nativeMock.getMakeupColors.mock.calls).toEqual([
+      ['lipstick'],
+      ['eyeshadow'],
+      ['blusher'],
+      ['eyebrow'],
+    ]);
+    nativeMock.getMakeupColors.mockResolvedValue(null as never);
+    await expect(NosmaiCameraSdk.getLipstickColors()).rejects.toMatchObject({
+      code: NosmaiErrorCode.nativeFailure,
+    });
+  });
+
+  it('forwards freckles quantity and dark-circle correction with scoped removals', async () => {
+    await NosmaiCameraSdk.applyFreckles(0.75);
+    await NosmaiCameraSdk.applyDarkCircleCorrector(0.6);
+    await NosmaiCameraSdk.removeFreckles();
+    await NosmaiCameraSdk.removeDarkCircleCorrector();
+    expect(nativeMock.setBeautyValue.mock.calls).toEqual([
+      ['freckles', 0.75],
+      ['darkCircle', 0.6],
+      ['freckles', 0],
+      ['darkCircle', 0],
+    ]);
+    expect(nativeMock.clearBeauty).not.toHaveBeenCalled();
+    expect(nativeMock.clearAll).not.toHaveBeenCalled();
+    expect(nativeMock.clearAREffect).not.toHaveBeenCalled();
+    for (const value of [-0.01, 1.01, NaN, Infinity]) {
+      await expect(NosmaiCameraSdk.applyFreckles(value)).rejects.toMatchObject({
+        code: NosmaiErrorCode.invalidArgument,
+      });
+      await expect(
+        NosmaiCameraSdk.applyDarkCircleCorrector(value)
+      ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    }
+  });
+
+  it('keeps contour and highlighter independent up to 2x', async () => {
+    await NosmaiCameraSdk.applyContourHighlighter({
+      contour: 2,
+      highlighter: 0.4,
+    });
+    await NosmaiCameraSdk.applyContourHighlighter({ highlighter: 1.5 });
+    await NosmaiCameraSdk.applyContourHighlighter();
+    expect(nativeMock.applyContourHighlighter.mock.calls).toEqual([
+      [2, 0.4],
+      [0, 1.5],
+      [0, 0],
+    ]);
+    await expect(
+      NosmaiCameraSdk.applyContourHighlighter({ contour: 2.01 })
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    await expect(
+      NosmaiCameraSdk.applyContourHighlighter(null as never)
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+  });
+
+  it.each([
+    ['ivory', 241, 214, 188],
+    ['beige', 228, 186, 156],
+    ['sand', 213, 160, 128],
+    ['honey', 194, 145, 110],
+    ['caramel', 169, 117, 81],
+    ['mocha', 128, 84, 58],
+    ['deep', 89, 60, 45],
+  ] as const)(
+    'preserves the approved %s foundation shade',
+    async (shade, r, g, b) => {
+      await NosmaiCameraSdk.applyFoundation({ shade, coverage: 0.8 });
+      expect(nativeMock.applyFoundation).toHaveBeenCalledWith(
+        0.8,
+        r / 255,
+        g / 255,
+        b / 255
+      );
+    }
+  );
+
+  it('supports foundation defaults/custom RGB and only removes foundation', async () => {
+    await NosmaiCameraSdk.applyFoundation();
+    expect(nativeMock.applyFoundation).toHaveBeenLastCalledWith(
+      0.5,
+      194 / 255,
+      145 / 255,
+      110 / 255
+    );
+    await NosmaiCameraSdk.applyFoundation({
+      color: { red: 0.7, green: 0.5, blue: 0.4, alpha: 0 },
+      coverage: 1,
+    });
+    expect(nativeMock.applyFoundation).toHaveBeenLastCalledWith(
+      1,
+      0.7,
+      0.5,
+      0.4
+    );
+    await NosmaiCameraSdk.removeFoundation();
+    expect(nativeMock.applyFoundation).toHaveBeenLastCalledWith(0, 0, 0, 0);
+    expect(nativeMock.clearBeauty).not.toHaveBeenCalled();
+    await expect(
+      NosmaiCameraSdk.applyFoundation({ shade: 'test' } as never)
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    await expect(
+      NosmaiCameraSdk.applyFoundation({ coverage: NaN })
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    await expect(
+      NosmaiCameraSdk.applyFoundation({ color: { red: 2, green: 0, blue: 0 } })
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+  });
+
+  it('preserves preparation false/retry and SDK upgrade errors', async () => {
+    nativeMock.prepareBeautyFilters
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    await expect(NosmaiCameraSdk.prepareBeautyFilters()).resolves.toBe(false);
+    await expect(NosmaiCameraSdk.prepareBeautyFilters()).resolves.toBe(true);
+    nativeMock.isBeautyPrepared.mockResolvedValue(true);
+    await expect(NosmaiCameraSdk.isBeautyPrepared()).resolves.toBe(true);
+    nativeMock.prepareBeautyFilters.mockRejectedValue({
+      code: NosmaiErrorCode.sdkUpgradeRequired,
+      message: 'Update native SDK',
+    });
+    await expect(NosmaiCameraSdk.prepareBeautyFilters()).rejects.toMatchObject({
+      code: NosmaiErrorCode.sdkUpgradeRequired,
+    });
+    expect(nativeMock.applyMakeup).not.toHaveBeenCalled();
+    expect(nativeMock.clearAll).not.toHaveBeenCalled();
+  });
+
+  it('hides and shows beauty without clearing layers or AR effects', async () => {
+    await NosmaiCameraSdk.setBeautyVisible(false);
+    await NosmaiCameraSdk.setBeautyVisible(true);
+    nativeMock.isBeautyVisible.mockResolvedValue(true);
+    await expect(NosmaiCameraSdk.isBeautyVisible()).resolves.toBe(true);
+    expect(nativeMock.setBeautyVisible.mock.calls).toEqual([[false], [true]]);
+    expect(nativeMock.clearBeauty).not.toHaveBeenCalled();
+    expect(nativeMock.clearAREffect).not.toHaveBeenCalled();
+    await expect(
+      NosmaiCameraSdk.setBeautyVisible('false' as never)
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+  });
+
+  it('accepts full signed production nose and chin reshape ranges', async () => {
+    for (const type of ['nose', 'chin'] as const) {
+      await NosmaiCameraSdk.setReshape(type, -1);
+      await NosmaiCameraSdk.setReshape(type, 1);
+      expect(nativeMock.setReshape).toHaveBeenCalledWith(type, -1);
+      expect(nativeMock.setReshape).toHaveBeenCalledWith(type, 1);
+    }
+  });
+
+  it('queries cloud beauty_effect with the same catalog route', async () => {
+    nativeMock.getCloudFilters.mockResolvedValue({
+      items: [],
+      pagination: {
+        currentPage: 1,
+        totalPages: 1,
+        totalItems: 0,
+        itemsPerPage: 20,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+    });
+    await NosmaiCameraSdk.getCloudFilters({
+      packageType: 'beauty_effect',
+      page: 1,
+    });
+    expect(nativeMock.getCloudFilters).toHaveBeenCalledWith(
+      'beauty_effect',
+      '2.0.0',
+      1,
+      20,
+      false
+    );
+  });
+
   it('updates, queries, and removes one makeup layer without broad clearing', async () => {
     nativeMock.setMakeupIntensity.mockResolvedValue(undefined);
     nativeMock.isMakeupActive.mockResolvedValue(true);
@@ -992,15 +1251,18 @@ describe('NosmaiCameraSdk JavaScript contract', () => {
     expect(nativeMock.clearMakeup).not.toHaveBeenCalled();
   });
 
-  it('preserves signed, type-specific face reshape ranges', async () => {
+  it('uses one signed minus-one-to-one range for every face reshape', async () => {
     nativeMock.setReshape.mockResolvedValue(undefined);
 
     await expect(
-      NosmaiCameraSdk.setReshape('faceSlim', -1.2)
+      NosmaiCameraSdk.setReshape('faceSlim', -1)
     ).resolves.toBeUndefined();
-    expect(nativeMock.setReshape).toHaveBeenCalledWith('faceSlim', -1.2);
+    expect(nativeMock.setReshape).toHaveBeenCalledWith('faceSlim', -1);
     await expect(
-      NosmaiCameraSdk.setReshape('nose', 0.51)
+      NosmaiCameraSdk.setReshape('nose', 1)
+    ).resolves.toBeUndefined();
+    await expect(
+      NosmaiCameraSdk.setReshape('nose', 1.01)
     ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
   });
 
@@ -1020,6 +1282,52 @@ describe('NosmaiCameraSdk JavaScript contract', () => {
 
     await expect(NosmaiCameraSdk.isEyeColorActive()).resolves.toBe(true);
     expect(nativeMock.isEyeColorActive).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards hair color and intensity and rejects out-of-range channels', async () => {
+    nativeMock.setHairColor.mockResolvedValue(undefined);
+    nativeMock.setHairColorIntensity.mockResolvedValue(undefined);
+    nativeMock.removeHairColor.mockResolvedValue(undefined);
+
+    await NosmaiCameraSdk.setHairColor(
+      { red: 0.7, green: 0.35, blue: 0.2 },
+      0.6
+    );
+    await NosmaiCameraSdk.setHairColor({ red: 0.1, green: 0.2, blue: 0.3 });
+    await NosmaiCameraSdk.setHairColorIntensity(0.8);
+    await NosmaiCameraSdk.removeHairColor();
+
+    expect(nativeMock.setHairColor).toHaveBeenNthCalledWith(
+      1,
+      0.7,
+      0.35,
+      0.2,
+      0.6
+    );
+    expect(nativeMock.setHairColor).toHaveBeenNthCalledWith(
+      2,
+      0.1,
+      0.2,
+      0.3,
+      0.6
+    );
+    expect(nativeMock.setHairColorIntensity).toHaveBeenCalledWith(0.8);
+    expect(nativeMock.removeHairColor).toHaveBeenCalledTimes(1);
+    await expect(
+      NosmaiCameraSdk.setHairColor({ red: 2, green: 0, blue: 0 })
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    await expect(
+      NosmaiCameraSdk.setHairColorIntensity(1.5)
+    ).rejects.toMatchObject({
+      code: NosmaiErrorCode.invalidArgument,
+    });
+  });
+
+  it('returns the native hair-color activity query unchanged', async () => {
+    nativeMock.isHairColorActive.mockResolvedValue(true);
+
+    await expect(NosmaiCameraSdk.isHairColorActive()).resolves.toBe(true);
+    expect(nativeMock.isHairColorActive).toHaveBeenCalledTimes(1);
   });
 
   it('forwards every HSB channel instead of dropping saturation or brightness', async () => {
@@ -1061,16 +1369,16 @@ describe('NosmaiCameraSdk JavaScript contract', () => {
   it('validates the cross-platform color-control ranges', async () => {
     nativeMock.setColorAdjustment.mockResolvedValue(undefined);
 
-    await NosmaiCameraSdk.setContrast(2);
+    await NosmaiCameraSdk.setContrast(4);
     await NosmaiCameraSdk.setHue(360);
-    await NosmaiCameraSdk.setWhiteBalance({ temperature: 6500, tint: -0.2 });
+    await NosmaiCameraSdk.setWhiteBalance({ temperature: 5000, tint: -0.2 });
 
     expect(nativeMock.setColorAdjustment.mock.calls).toEqual([
-      ['contrast', 2, 0, 0],
+      ['contrast', 4, 0, 0],
       ['hue', 360, 0, 0],
-      ['whiteBalance', 6500, -0.2, 0],
+      ['whiteBalance', 5000, -0.2, 0],
     ]);
-    await expect(NosmaiCameraSdk.setContrast(2.01)).rejects.toMatchObject({
+    await expect(NosmaiCameraSdk.setContrast(4.01)).rejects.toMatchObject({
       code: NosmaiErrorCode.invalidArgument,
     });
     await expect(NosmaiCameraSdk.setHue(-1)).rejects.toMatchObject({
@@ -1110,6 +1418,61 @@ describe('NosmaiCameraSdk JavaScript contract', () => {
         uri: 'https://example.com/background.jpg',
       })
     ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+  });
+
+  it('serializes face sticker configuration and placement', async () => {
+    nativeMock.setFaceSticker.mockResolvedValue(true);
+    nativeMock.setFaceStickerPlacement.mockResolvedValue(undefined);
+
+    await expect(
+      NosmaiCameraSdk.setFaceSticker({
+        uri: 'file:///tmp/sticker.gif',
+        anchor: 'aboveHead',
+        scale: 0.8,
+      })
+    ).resolves.toBe(true);
+    await NosmaiCameraSdk.setFaceSticker({
+      uri: 'file://localhost/tmp/crown.png',
+    });
+    await NosmaiCameraSdk.setFaceStickerPlacement({
+      anchor: 'nose',
+      offsetY: 0.05,
+      scale: 0.4,
+    });
+
+    expect(nativeMock.setFaceSticker.mock.calls).toEqual([
+      ['file:///tmp/sticker.gif', 'aboveHead', 0, 0, 0.8, 0, 1],
+      ['file://localhost/tmp/crown.png', 'center', 0, 0, 0, 0, 1],
+    ]);
+    expect(nativeMock.setFaceStickerPlacement.mock.calls).toEqual([
+      ['nose', 0, 0.05, 0.4, 0, 1],
+    ]);
+
+    await expect(
+      NosmaiCameraSdk.setFaceSticker({ uri: 'https://example.com/sticker.gif' })
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    await expect(
+      NosmaiCameraSdk.setFaceSticker({
+        uri: 'file:///tmp/sticker.gif',
+        anchor: 'ear' as never,
+      })
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    await expect(
+      NosmaiCameraSdk.setFaceStickerPlacement({ anchor: 'nose', opacity: 2 })
+    ).rejects.toMatchObject({ code: NosmaiErrorCode.invalidArgument });
+    expect(nativeMock.setFaceSticker).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps face sticker clear and query scoped to their native methods', async () => {
+    nativeMock.clearFaceSticker.mockResolvedValue(undefined);
+    nativeMock.isFaceStickerActive.mockResolvedValue(true);
+
+    await expect(NosmaiCameraSdk.clearFaceSticker()).resolves.toBeUndefined();
+    await expect(NosmaiCameraSdk.isFaceStickerActive()).resolves.toBe(true);
+
+    expect(nativeMock.clearFaceSticker).toHaveBeenCalledTimes(1);
+    expect(nativeMock.isFaceStickerActive).toHaveBeenCalledTimes(1);
+    expect(nativeMock.clearAREffect).not.toHaveBeenCalled();
   });
 
   it('keeps visual clear operations scoped to their native methods', async () => {

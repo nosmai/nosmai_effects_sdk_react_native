@@ -208,10 +208,6 @@ class NosmaiCameraSdkModule(
     controller.getLocalFilters(this, packageType, promise)
   }
 
-  override fun getDebugFilters(packageType: String?, promise: Promise) {
-    controller.getDebugFilters(this, packageType, promise)
-  }
-
   override fun isCloudFilterEnabled(promise: Promise) {
     controller.isCloudFilterEnabled(this, promise)
   }
@@ -266,6 +262,15 @@ class NosmaiCameraSdkModule(
   override fun isAdvancedFiltersEnabled(promise: Promise) {
     controller.isAdvancedFiltersEnabled(this, promise)
   }
+
+  override fun prepareBeautyFilters(promise: Promise) = controller.prepareBeautyFilters(this, promise)
+  override fun isBeautyPrepared(promise: Promise) = controller.isBeautyPrepared(this, promise)
+  override fun setBeautyVisible(visible: Boolean, promise: Promise) = controller.setBeautyVisible(this, visible, promise)
+  override fun isBeautyVisible(promise: Promise) = controller.isBeautyVisible(this, promise)
+  override fun applyContourHighlighter(contour: Double, highlighter: Double, promise: Promise) = controller.applyContourHighlighter(this, contour, highlighter, promise)
+  override fun applyFoundation(coverage: Double, red: Double, green: Double, blue: Double, promise: Promise) = controller.applyFoundation(this, coverage, red, green, blue, promise)
+  override fun getMakeupColors(makeupType: String, promise: Promise) = controller.getMakeupColors(this, makeupType, promise)
+  override fun applyMakeupDefault(makeupType: String, style: String, intensity: Double, promise: Promise) = controller.applyMakeupDefault(this, makeupType, style, intensity, promise)
 
   override fun setBeautyValue(control: String, value: Double, promise: Promise) {
     controller.setBeautyValue(this, control, value, promise)
@@ -350,6 +355,28 @@ class NosmaiCameraSdkModule(
     controller.isEyeColorActive(this, promise)
   }
 
+  override fun setHairColor(
+    red: Double,
+    green: Double,
+    blue: Double,
+    intensity: Double,
+    promise: Promise
+  ) {
+    controller.setHairColor(this, red, green, blue, intensity, promise)
+  }
+
+  override fun setHairColorIntensity(intensity: Double, promise: Promise) {
+    controller.setHairColorIntensity(this, intensity, promise)
+  }
+
+  override fun removeHairColor(promise: Promise) {
+    controller.removeHairColor(this, promise)
+  }
+
+  override fun isHairColorActive(promise: Promise) {
+    controller.isHairColorActive(this, promise)
+  }
+
   override fun setColorAdjustment(
     control: String,
     value1: Double,
@@ -396,6 +423,58 @@ class NosmaiCameraSdkModule(
 
   override fun clearBackground(promise: Promise) {
     controller.clearBackground(this, promise)
+  }
+
+  override fun setFaceSticker(
+    resourceUri: String,
+    anchor: String,
+    offsetX: Double,
+    offsetY: Double,
+    scale: Double,
+    rotationDeg: Double,
+    opacity: Double,
+    promise: Promise
+  ) {
+    controller.setFaceSticker(
+      this,
+      resourceUri,
+      anchor,
+      offsetX,
+      offsetY,
+      scale,
+      rotationDeg,
+      opacity,
+      promise
+    )
+  }
+
+  override fun setFaceStickerPlacement(
+    anchor: String,
+    offsetX: Double,
+    offsetY: Double,
+    scale: Double,
+    rotationDeg: Double,
+    opacity: Double,
+    promise: Promise
+  ) {
+    controller.setFaceStickerPlacement(
+      this,
+      anchor,
+      offsetX,
+      offsetY,
+      scale,
+      rotationDeg,
+      opacity,
+      promise
+    )
+  }
+
+  override fun clearFaceSticker(promise: Promise) {
+    controller.clearFaceSticker(this, promise)
+  }
+
+  override fun isFaceStickerActive(promise: Promise) {
+    controller.isFaceStickerActive(this, promise)
   }
 
   override fun onActiveEffectsChanged(state: WritableMap) {

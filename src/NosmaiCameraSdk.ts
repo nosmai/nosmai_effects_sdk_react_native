@@ -27,7 +27,12 @@ import type {
   NosmaiFilter,
   NosmaiFlashMode,
   NosmaiFrameStreamOptions,
+  NosmaiFaceStickerAnchor,
+  NosmaiFaceStickerConfiguration,
+  NosmaiFaceStickerPlacement,
   NosmaiHsbAdjustment,
+  NosmaiMakeupColor,
+  NosmaiFoundationShade,
   NosmaiMakeupConfiguration,
   NosmaiMakeupType,
   NosmaiTorchMode,
@@ -232,6 +237,47 @@ const MAKEUP_STYLES: Readonly<Record<NosmaiMakeupType, readonly string[]>> = {
   eyebrow: ['natural', 'bold', 'arched'],
 };
 
+const FOUNDATION_COLORS: Readonly<
+  Record<NosmaiFoundationShade, readonly [number, number, number]>
+> = {
+  ivory: [241, 214, 188],
+  beige: [228, 186, 156],
+  sand: [213, 160, 128],
+  honey: [194, 145, 110],
+  caramel: [169, 117, 81],
+  mocha: [128, 84, 58],
+  deep: [89, 60, 45],
+};
+
+async function getMakeupColors(
+  type: NosmaiMakeupType
+): Promise<NosmaiMakeupColor[]> {
+  const value = await callNative(() =>
+    NativeNosmaiCameraSdk.getMakeupColors(type)
+  );
+  const colors =
+    typeof value === 'object' && value !== null
+      ? (value as { colors?: unknown }).colors
+      : undefined;
+  if (!Array.isArray(colors))
+    throw new NosmaiSdkError(
+      NosmaiErrorCode.nativeFailure,
+      'Native makeup palette is invalid.'
+    );
+  return colors.map((color: unknown) => {
+    if (typeof color !== 'object' || color === null)
+      throw new NosmaiSdkError(
+        NosmaiErrorCode.nativeFailure,
+        'Native makeup colour is invalid.'
+      );
+    const entry = color as NosmaiMakeupColor;
+    return {
+      name: requireNonEmpty(entry.name, 'name'),
+      ...requireRgbColor(entry),
+    };
+  });
+}
+
 function requireMakeupType(value: NosmaiMakeupType): NosmaiMakeupType {
   if (!Object.prototype.hasOwnProperty.call(MAKEUP_STYLES, value)) {
     throw new NosmaiSdkError(
@@ -246,16 +292,62 @@ const RESHAPE_RANGES: Readonly<
   Record<NosmaiReshapeType, readonly [number, number]>
 > = {
   lip: [-1, 1],
-  faceSlim: [-1.2, 1.2],
-  eye: [-1.3, 1.3],
-  nose: [-0.5, 0.5],
-  chin: [-0.8, 0.8],
+  faceSlim: [-1, 1],
+  eye: [-1, 1],
+  nose: [-1, 1],
+  chin: [-1, 1],
   brow: [-1, 1],
   browThickness: [-1, 1],
   jaw: [-1, 1],
   mouthWidth: [-1, 1],
   forehead: [-1, 1],
 };
+
+const FACE_STICKER_ANCHORS: ReadonlySet<NosmaiFaceStickerAnchor> =
+  new Set<NosmaiFaceStickerAnchor>([
+    'center',
+    'forehead',
+    'aboveHead',
+    'leftEye',
+    'rightEye',
+    'eyes',
+    'nose',
+    'mouth',
+    'chin',
+  ]);
+
+function requireFaceStickerAnchor(value: unknown): NosmaiFaceStickerAnchor {
+  if (
+    typeof value === 'string' &&
+    FACE_STICKER_ANCHORS.has(value as NosmaiFaceStickerAnchor)
+  ) {
+    return value as NosmaiFaceStickerAnchor;
+  }
+  throw new NosmaiSdkError(
+    NosmaiErrorCode.invalidArgument,
+    `anchor must be one of ${[...FACE_STICKER_ANCHORS].join(', ')}.`
+  );
+}
+
+/** Flattens a sticker placement to the fixed native argument order. */
+function flattenFaceStickerPlacement(
+  placement: NosmaiFaceStickerPlacement
+): [NosmaiFaceStickerAnchor, number, number, number, number, number] {
+  if (typeof placement !== 'object' || placement === null) {
+    throw new NosmaiSdkError(
+      NosmaiErrorCode.invalidArgument,
+      'placement must be a face sticker placement.'
+    );
+  }
+  return [
+    requireFaceStickerAnchor(placement.anchor),
+    requireFiniteRange(placement.offsetX ?? 0, 'offsetX', -1, 1),
+    requireFiniteRange(placement.offsetY ?? 0, 'offsetY', -1, 1),
+    requireFiniteRange(placement.scale ?? 0, 'scale', 0, 4),
+    requireFiniteRange(placement.rotationDeg ?? 0, 'rotationDeg', -360, 360),
+    requireFiniteRange(placement.opacity ?? 1, 'opacity', 0, 1),
+  ];
+}
 
 const MAX_CLOUD_PAGE = 2_147_483_647;
 const MAX_EFFECT_PARAMETER_NAME_LENGTH = 128;
@@ -656,15 +748,6 @@ export const NosmaiCameraSdk: NosmaiCameraApi = {
     );
   },
 
-  async getDebugFilters(packageType) {
-    const nativePackageType = optionalPackageType(packageType);
-    return normalizeLocalFilters(
-      await callNative(() =>
-        NativeNosmaiCameraSdk.getDebugFilters(nativePackageType)
-      )
-    );
-  },
-
   isCloudFilterEnabled() {
     return callNative(() => NativeNosmaiCameraSdk.isCloudFilterEnabled());
   },
@@ -747,6 +830,136 @@ export const NosmaiCameraSdk: NosmaiCameraApi = {
     );
   },
 
+  async setContourHighlighter(level) {
+    const value = requireFiniteRange(level, 'level', 0, 1);
+    return callNativeVoid(() =>
+      NativeNosmaiCameraSdk.applyContourHighlighter(value, value)
+    );
+  },
+
+  async setDarkCircleCorrector(level) {
+    return setBeautyValue(
+      'darkCircle',
+      requireFiniteRange(level, 'level', 0, 1)
+    );
+  },
+
+  prepareBeautyFilters() {
+    return callNative(() => NativeNosmaiCameraSdk.prepareBeautyFilters());
+  },
+
+  isBeautyPrepared() {
+    return callNative(() => NativeNosmaiCameraSdk.isBeautyPrepared());
+  },
+
+  async setBeautyVisible(visible) {
+    if (typeof visible !== 'boolean')
+      throw new NosmaiSdkError(
+        NosmaiErrorCode.invalidArgument,
+        'visible must be a boolean.'
+      );
+    return callNativeVoid(() =>
+      NativeNosmaiCameraSdk.setBeautyVisible(visible)
+    );
+  },
+
+  isBeautyVisible() {
+    return callNative(() => NativeNosmaiCameraSdk.isBeautyVisible());
+  },
+
+  async applyContourHighlighter(configuration = {}) {
+    if (
+      typeof configuration !== 'object' ||
+      configuration === null ||
+      Array.isArray(configuration)
+    )
+      throw new NosmaiSdkError(
+        NosmaiErrorCode.invalidArgument,
+        'configuration must be a beauty configuration object.'
+      );
+    return callNativeVoid(() =>
+      NativeNosmaiCameraSdk.applyContourHighlighter(
+        requireFiniteRange(configuration.contour ?? 0, 'contour', 0, 2),
+        requireFiniteRange(configuration.highlighter ?? 0, 'highlighter', 0, 2)
+      )
+    );
+  },
+
+  async applyFreckles(quantity) {
+    return setBeautyValue(
+      'freckles',
+      requireFiniteRange(quantity, 'quantity', 0, 1)
+    );
+  },
+
+  async removeFreckles() {
+    return setBeautyValue('freckles', 0);
+  },
+
+  async applyFoundation(configuration = {}) {
+    if (
+      typeof configuration !== 'object' ||
+      configuration === null ||
+      Array.isArray(configuration)
+    )
+      throw new NosmaiSdkError(
+        NosmaiErrorCode.invalidArgument,
+        'configuration must be a beauty configuration object.'
+      );
+    const shade = configuration.shade ?? 'honey';
+    if (!Object.prototype.hasOwnProperty.call(FOUNDATION_COLORS, shade))
+      throw new NosmaiSdkError(
+        NosmaiErrorCode.invalidArgument,
+        'Foundation shade is not supported.'
+      );
+    const preset = FOUNDATION_COLORS[shade];
+    const color =
+      configuration.color === undefined
+        ? {
+            red: preset[0] / 255,
+            green: preset[1] / 255,
+            blue: preset[2] / 255,
+          }
+        : requireRgbColor(configuration.color);
+    return callNativeVoid(() =>
+      NativeNosmaiCameraSdk.applyFoundation(
+        requireFiniteRange(configuration.coverage ?? 0.5, 'coverage', 0, 1),
+        color.red,
+        color.green,
+        color.blue
+      )
+    );
+  },
+
+  async removeFoundation() {
+    return callNativeVoid(() =>
+      NativeNosmaiCameraSdk.applyFoundation(0, 0, 0, 0)
+    );
+  },
+
+  async applyDarkCircleCorrector(intensity) {
+    return setBeautyValue(
+      'darkCircle',
+      requireFiniteRange(intensity, 'intensity', 0, 1)
+    );
+  },
+  async removeDarkCircleCorrector() {
+    return setBeautyValue('darkCircle', 0);
+  },
+
+  getLipstickColors() {
+    return getMakeupColors('lipstick');
+  },
+  getEyeshadowColors() {
+    return getMakeupColors('eyeshadow');
+  },
+  getBlusherColors() {
+    return getMakeupColors('blusher');
+  },
+  getEyebrowColors() {
+    return getMakeupColors('eyebrow');
+  },
+
   async clearBeauty() {
     return callNativeVoid(() => NativeNosmaiCameraSdk.clearBeauty());
   },
@@ -770,19 +983,23 @@ export const NosmaiCameraSdk: NosmaiCameraApi = {
       configuration.intensity ?? 1,
       'intensity',
       0,
-      1
+      makeupType === 'lipstick' || makeupType === 'blusher' ? 2 : 1
     );
+    const configurationColor = (configuration as { color?: NosmaiRgbColor })
+      .color;
+    if (makeupType !== 'eyelash' && configurationColor === undefined) {
+      return callNativeVoid(() =>
+        NativeNosmaiCameraSdk.applyMakeupDefault(
+          makeupType,
+          configuration.style,
+          intensity
+        )
+      );
+    }
     const color =
       makeupType === 'eyelash'
-        ? { red: 0, green: 0, blue: 0, alpha: 1 }
-        : requireRgbColor(
-            (
-              configuration as Exclude<
-                NosmaiMakeupConfiguration,
-                { type: 'eyelash' }
-              >
-            ).color
-          );
+        ? { red: 0, green: 0, blue: 0 }
+        : requireRgbColor(configurationColor as NosmaiRgbColor);
     return callNativeVoid(() =>
       NativeNosmaiCameraSdk.applyMakeup(
         makeupType,
@@ -799,7 +1016,12 @@ export const NosmaiCameraSdk: NosmaiCameraApi = {
     return callNativeVoid(() =>
       NativeNosmaiCameraSdk.setMakeupIntensity(
         requireMakeupType(makeupType),
-        requireFiniteRange(intensity, 'intensity', 0, 1)
+        requireFiniteRange(
+          intensity,
+          'intensity',
+          0,
+          makeupType === 'lipstick' || makeupType === 'blusher' ? 2 : 1
+        )
       )
     );
   },
@@ -863,6 +1085,34 @@ export const NosmaiCameraSdk: NosmaiCameraApi = {
     return callNative(() => NativeNosmaiCameraSdk.isEyeColorActive());
   },
 
+  async setHairColor(color, intensity = 0.6) {
+    const normalized = requireRgbColor(color);
+    return callNativeVoid(() =>
+      NativeNosmaiCameraSdk.setHairColor(
+        normalized.red,
+        normalized.green,
+        normalized.blue,
+        requireFiniteRange(intensity, 'intensity', 0, 1)
+      )
+    );
+  },
+
+  async setHairColorIntensity(intensity) {
+    return callNativeVoid(() =>
+      NativeNosmaiCameraSdk.setHairColorIntensity(
+        requireFiniteRange(intensity, 'intensity', 0, 1)
+      )
+    );
+  },
+
+  async removeHairColor() {
+    return callNativeVoid(() => NativeNosmaiCameraSdk.removeHairColor());
+  },
+
+  isHairColorActive() {
+    return callNative(() => NativeNosmaiCameraSdk.isHairColorActive());
+  },
+
   async setBrightness(brightness) {
     return setColorAdjustment(
       'brightness',
@@ -873,7 +1123,7 @@ export const NosmaiCameraSdk: NosmaiCameraApi = {
   async setContrast(contrast) {
     return setColorAdjustment(
       'contrast',
-      requireFiniteRange(contrast, 'contrast', 0, 2)
+      requireFiniteRange(contrast, 'contrast', 0, 4)
     );
   },
 
@@ -1011,6 +1261,55 @@ export const NosmaiCameraSdk: NosmaiCameraApi = {
 
   async clearBackground() {
     return callNativeVoid(() => NativeNosmaiCameraSdk.clearBackground());
+  },
+
+  async setFaceSticker(configuration: NosmaiFaceStickerConfiguration) {
+    if (typeof configuration !== 'object' || configuration === null) {
+      throw new NosmaiSdkError(
+        NosmaiErrorCode.invalidArgument,
+        'configuration must be a face sticker configuration.'
+      );
+    }
+    const uri = requireLocalFileUri(configuration.uri, 'uri');
+    const [anchor, offsetX, offsetY, scale, rotationDeg, opacity] =
+      flattenFaceStickerPlacement({
+        ...configuration,
+        anchor: configuration.anchor ?? 'center',
+      });
+    return callNative(() =>
+      NativeNosmaiCameraSdk.setFaceSticker(
+        uri,
+        anchor,
+        offsetX,
+        offsetY,
+        scale,
+        rotationDeg,
+        opacity
+      )
+    );
+  },
+
+  async setFaceStickerPlacement(placement: NosmaiFaceStickerPlacement) {
+    const [anchor, offsetX, offsetY, scale, rotationDeg, opacity] =
+      flattenFaceStickerPlacement(placement);
+    return callNativeVoid(() =>
+      NativeNosmaiCameraSdk.setFaceStickerPlacement(
+        anchor,
+        offsetX,
+        offsetY,
+        scale,
+        rotationDeg,
+        opacity
+      )
+    );
+  },
+
+  async clearFaceSticker() {
+    return callNativeVoid(() => NativeNosmaiCameraSdk.clearFaceSticker());
+  },
+
+  async isFaceStickerActive() {
+    return callNative(() => NativeNosmaiCameraSdk.isFaceStickerActive());
   },
 
   addActiveEffectsChangedListener(listener) {

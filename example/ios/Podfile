@@ -17,6 +17,14 @@ end
 target 'ReactNativeCameraSdkExample' do
   config = use_native_modules!
 
+  # Local SDK development only: NOSMAI_SDK_LOCAL_PODSPEC_DIR points at a folder
+  # holding NosmaiCameraSDK.podspec next to a nosmai.framework built from
+  # source, to compile against native APIs that have not shipped yet. Leave it
+  # unset for every published build; the podspec's published pod is used then.
+  if ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
+    pod 'NosmaiCameraSDK', :path => ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
+  end
+
   use_react_native!(
     :path => config[:reactNativePath],
     # An absolute path to your application root.

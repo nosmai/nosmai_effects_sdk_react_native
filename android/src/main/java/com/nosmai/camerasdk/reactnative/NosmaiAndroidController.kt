@@ -87,6 +87,7 @@ internal class NosmaiAndroidController(
   private val licenseAdapter = NosmaiLicenseStatusAdapter()
   private val effectMutationAdapter = NosmaiEffectMutationAdapter()
   private val visualEffects = NosmaiAndroidVisualEffects(mainHandler)
+  private val beautyPreparation = NosmaiBeautyPreparation(mainHandler)
   private val cloudFilters = NosmaiAndroidCloud(
     initialReactContext.applicationContext,
     mainHandler,
@@ -353,7 +354,10 @@ internal class NosmaiAndroidController(
 
   fun detachModule(sink: NosmaiModuleEventSink) {
     runOnMain {
-      if (moduleSink === sink) moduleSink = null
+      if (moduleSink === sink) {
+        beautyPreparation.invalidate()
+        moduleSink = null
+      }
       if (pendingModuleSinkAfterCleanup === sink) {
         pendingModuleSinkAfterCleanup = null
         if (pendingInitialization?.owner === sink) {
@@ -462,7 +466,10 @@ internal class NosmaiAndroidController(
             .exceptionOrNull()?.let { if (failure == null) failure = it }
           runCatching { retiredPreview?.onPause() }
             .exceptionOrNull()?.let { if (failure == null) failure = it }
-          runCatching { NosmaiSDK.stopProcessing() }
+          runCatching {
+            beautyPreparation.invalidate()
+            NosmaiSDK.stopProcessing()
+          }
             .exceptionOrNull()?.let { if (failure == null) failure = it }
           if (failure != null) {
             teardownPoisoned = true
@@ -627,7 +634,10 @@ internal class NosmaiAndroidController(
             .exceptionOrNull()?.let { if (failure == null) failure = it }
           runCatching { retiredPreview?.onPause() }
             .exceptionOrNull()?.let { if (failure == null) failure = it }
-          runCatching { NosmaiSDK.stopProcessing() }
+          runCatching {
+            beautyPreparation.invalidate()
+            NosmaiSDK.stopProcessing()
+          }
             .exceptionOrNull()?.let { if (failure == null) failure = it }
           if (failure != null) {
             teardownPoisoned = true
@@ -952,7 +962,10 @@ internal class NosmaiAndroidController(
       invalidateOesWatchdog()
       stopCameraAsync {
         if (transition != transitionGeneration) return@stopCameraAsync
-        val sdkFailure = runCatching { NosmaiSDK.stopProcessing() }.exceptionOrNull()
+        val sdkFailure = runCatching {
+            beautyPreparation.invalidate()
+            NosmaiSDK.stopProcessing()
+          }.exceptionOrNull()
         var failure = cameraStopSettlementFailure ?: sdkFailure
         runCatching { activeView?.showTransitionOverlay() }
           .exceptionOrNull()?.let { if (failure == null) failure = it }
@@ -980,6 +993,7 @@ internal class NosmaiAndroidController(
         return@runOnMain
       }
 
+      beautyPreparation.invalidate()
       cameraPaused = true
       pendingCameraStart = false
       cancelYuvPipelineStart("Camera pause cancelled the pending start")
@@ -1567,6 +1581,7 @@ internal class NosmaiAndroidController(
                         // Authored AR/beauty packages evict built-in beauty
                         // controls in the SDK's exclusivity handoff. Color
                         // controls are tracked independently and may coexist.
+                        beautyPreparation.invalidate()
                         visualEffects.resetBeautyTracking()
                         visualEffects.reconcileBuiltInState()
                       }
@@ -1604,6 +1619,254 @@ internal class NosmaiAndroidController(
           )
         }
       }
+    }
+  }
+
+  // ── Face sticker ──────────────────────────────────────────────────────────
+  // The sticker occupies the AR slot (the one applyEffect / clearAREffect use),
+  // but NosmaiPipelineState.activeEffectPath stays null while it does, so every
+  // slot check on this path goes through NosmaiEffects.isFaceStickerActive().
+
+  private fun faceStickerActive(): Boolean =
+    runCatching { NosmaiEffects.isFaceStickerActive() }.getOrDefault(false)
+
+  fun setFaceSticker(
+    owner: NosmaiModuleEventSink,
+    resourceUri: String,
+    anchor: String,
+    offsetX: Double,
+    offsetY: Double,
+    scale: Double,
+    rotationDeg: Double,
+    opacity: Double,
+    promise: Promise
+  ) {
+    runOnMain {
+      if (!ensureModuleOwner(owner, promise)) return@runOnMain
+      if (!ensureInitialized(promise)) return@runOnMain
+      if (!canApplyEffect()) {
+        reject(
+          promise,
+          ERROR_INVALID_STATE,
+          "Start processing and keep the app active before applying a face sticker"
+        )
+        return@runOnMain
+      }
+      val stickerAnchor = FACE_STICKER_ANCHORS[anchor]
+      if (stickerAnchor == null) {
+        reject(
+          promise,
+          ERROR_ARGUMENT,
+          "anchor must be one of ${FACE_STICKER_ANCHORS.keys.joinToString()}"
+        )
+        return@runOnMain
+      }
+
+      enqueueEffectOperation(owner, promise) { finish ->
+        if (cleanupInProgress) {
+          finish(
+            NosmaiEffectOperationResult(
+              code = ERROR_OPERATION_CANCELLED,
+              message = "Face sticker apply was cancelled by session cleanup"
+            )
+          )
+          return@enqueueEffectOperation
+        }
+        if (!canApplyEffect()) {
+          finish(
+            NosmaiEffectOperationResult(
+              code = ERROR_INVALID_STATE,
+              message =
+                "Start processing and keep the app active before applying a face sticker"
+            )
+          )
+          return@enqueueEffectOperation
+        }
+
+        // The file is read off the main thread; the SDK decodes the bytes
+        // itself (PNG, JPEG or GIF — a GIF animates on the face).
+        visualEffects.readFaceStickerBytes(resourceUri) { bytes, error ->
+          if (bytes == null || error != null) {
+            finish(
+              NosmaiEffectOperationResult(
+                code = ERROR_FACE_STICKER_RESOURCE,
+                message = error?.message ?: "Unable to read the face sticker file",
+                cause = error?.cause
+              )
+            )
+            return@readFaceStickerBytes
+          }
+          if (cleanupInProgress) {
+            finish(
+              NosmaiEffectOperationResult(
+                code = ERROR_OPERATION_CANCELLED,
+                message = "Face sticker apply was cancelled by session cleanup"
+              )
+            )
+            return@readFaceStickerBytes
+          }
+          try {
+            NosmaiEffects.setFaceSticker(
+              bytes,
+              stickerAnchor,
+              offsetX.toFloat(),
+              offsetY.toFloat(),
+              scale.toFloat(),
+              rotationDeg.toFloat(),
+              opacity.toFloat(),
+              object : NosmaiEffects.EffectCallback {
+                override fun onSuccess() {
+                  runOnMain {
+                    waitForEffectPipelineCondition(
+                      condition = { faceStickerActive() }
+                    ) { failure ->
+                      if (failure == null) {
+                        // Like an authored AR package, the sticker evicts
+                        // built-in beauty in the SDK's exclusivity handoff.
+                        beautyPreparation.invalidate()
+                        visualEffects.resetBeautyTracking()
+                        visualEffects.reconcileBuiltInState()
+                        finish(NosmaiEffectOperationResult(value = true))
+                      } else {
+                        finish(
+                          NosmaiEffectOperationResult(
+                            code = ERROR_EFFECT_APPLY,
+                            message = failure.message,
+                            cause = failure.cause
+                          )
+                        )
+                      }
+                    }
+                  }
+                }
+
+                override fun onError(errorMessage: String?) {
+                  finish(
+                    NosmaiEffectOperationResult(
+                      code = ERROR_EFFECT_APPLY,
+                      message = errorMessage ?: "The face sticker could not be applied"
+                    )
+                  )
+                }
+              }
+            )
+          } catch (error: Throwable) {
+            finish(
+              NosmaiEffectOperationResult(
+                code = ERROR_EFFECT_APPLY,
+                message = error.message ?: "The face sticker could not be applied",
+                cause = error
+              )
+            )
+          }
+        }
+      }
+    }
+  }
+
+  fun setFaceStickerPlacement(
+    owner: NosmaiModuleEventSink,
+    anchor: String,
+    offsetX: Double,
+    offsetY: Double,
+    scale: Double,
+    rotationDeg: Double,
+    opacity: Double,
+    promise: Promise
+  ) {
+    runOnMain {
+      if (!ensureModuleOwner(owner, promise)) return@runOnMain
+      if (!ensureInitialized(promise)) return@runOnMain
+      val stickerAnchor = FACE_STICKER_ANCHORS[anchor]
+      if (stickerAnchor == null) {
+        reject(
+          promise,
+          ERROR_ARGUMENT,
+          "anchor must be one of ${FACE_STICKER_ANCHORS.keys.joinToString()}"
+        )
+        return@runOnMain
+      }
+      try {
+        // Cheap by design: the texture stays uploaded, only placement moves.
+        // A no-op inside the SDK when no sticker is active.
+        NosmaiEffects.setFaceStickerPlacement(
+          stickerAnchor,
+          offsetX.toFloat(),
+          offsetY.toFloat(),
+          scale.toFloat(),
+          rotationDeg.toFloat(),
+          opacity.toFloat()
+        )
+        promise.resolve(null)
+      } catch (error: Throwable) {
+        reject(
+          promise,
+          ERROR_EFFECT_STATE,
+          error.message ?: "Unable to update the face sticker placement",
+          error
+        )
+      }
+    }
+  }
+
+  fun clearFaceSticker(owner: NosmaiModuleEventSink, promise: Promise) {
+    runOnMain {
+      if (!ensureModuleOwner(owner, promise)) return@runOnMain
+      if (!ensureInitialized(promise)) return@runOnMain
+      enqueueEffectOperation(owner, promise) { finish ->
+        if (!faceStickerActive()) {
+          finish(NosmaiEffectOperationResult(value = null))
+          return@enqueueEffectOperation
+        }
+        try {
+          NosmaiEffects.clearFaceSticker(
+            object : NosmaiEffects.EffectCallback {
+              override fun onSuccess() {
+                runOnMain {
+                  waitForEffectPipelineCondition(
+                    condition = { !faceStickerActive() }
+                  ) { failure ->
+                    if (failure == null) {
+                      finish(NosmaiEffectOperationResult(value = null))
+                    } else {
+                      finish(
+                        NosmaiEffectOperationResult(
+                          code = ERROR_EFFECT_CLEAR,
+                          message = failure.message,
+                          cause = failure.cause
+                        )
+                      )
+                    }
+                  }
+                }
+              }
+
+              override fun onError(errorMessage: String?) {
+                finish(
+                  NosmaiEffectOperationResult(
+                    code = ERROR_EFFECT_CLEAR,
+                    message = errorMessage ?: "The face sticker could not be cleared"
+                  )
+                )
+              }
+            }
+          )
+        } catch (error: Throwable) {
+          finish(
+            NosmaiEffectOperationResult(
+              code = ERROR_EFFECT_CLEAR,
+              message = error.message ?: "The face sticker could not be cleared",
+              cause = error
+            )
+          )
+        }
+      }
+    }
+  }
+
+  fun isFaceStickerActive(owner: NosmaiModuleEventSink, promise: Promise) {
+    enqueueVisualQuery(owner, promise) {
+      faceStickerActive()
     }
   }
 
@@ -1909,70 +2172,6 @@ internal class NosmaiAndroidController(
     }
   }
 
-  fun getDebugFilters(
-    owner: NosmaiModuleEventSink,
-    packageType: String?,
-    promise: Promise
-  ) {
-    runOnMain {
-      if (!ensureModuleOwner(owner, promise)) return@runOnMain
-      if (!ensureInitialized(promise)) return@runOnMain
-
-      val nativeType = when (packageType) {
-        null -> null
-        "filter" -> NosmaiFilterInfo.Type.FILTER
-        "effect" -> NosmaiFilterInfo.Type.EFFECT
-        "background" -> NosmaiFilterInfo.Type.BACKGROUND
-        "beauty_effect" -> NosmaiFilterInfo.Type.BEAUTY_EFFECT
-        "game" -> NosmaiFilterInfo.Type.GAME
-        else -> {
-          reject(
-            promise,
-            ERROR_ARGUMENT,
-            "packageType must be filter, effect, background, beauty_effect, or game"
-          )
-          return@runOnMain
-        }
-      }
-
-      val callback = NosmaiEffects.DebugFiltersCallback { filters, error ->
-        runOnMain {
-          if (!ensureModuleOwner(owner, promise)) return@runOnMain
-          if (error != null) {
-            reject(
-              promise,
-              ERROR_DEBUG_FILTERS,
-              error.message ?: "Unable to load bundled debug filters",
-              error
-            )
-            return@runOnMain
-          }
-
-          val items = Arguments.createArray()
-          filters.orEmpty().forEach { filter ->
-            NosmaiStateMapper.filterInfoToWritableMap(filter)?.let(items::pushMap)
-          }
-          promise.resolve(Arguments.createMap().apply { putArray("items", items) })
-        }
-      }
-
-      try {
-        if (nativeType == null) {
-          NosmaiEffects.getDebugFilters(callback)
-        } else {
-          NosmaiEffects.getDebugFilters(nativeType, callback)
-        }
-      } catch (error: Throwable) {
-        reject(
-          promise,
-          ERROR_DEBUG_FILTERS,
-          error.message ?: "Unable to load bundled debug filters",
-          error
-        )
-      }
-    }
-  }
-
   fun isCloudFilterEnabled(owner: NosmaiModuleEventSink, promise: Promise) {
     runOnMain {
       if (!ensureModuleOwner(owner, promise)) return@runOnMain
@@ -2146,7 +2345,8 @@ internal class NosmaiAndroidController(
 
   fun clearAREffect(owner: NosmaiModuleEventSink, promise: Promise) {
     clearScopedEffect(owner, promise, "effect") {
-      it.activeEffectPath.isNullOrBlank()
+      // A face sticker holds this slot with a null path; wait for it too.
+      it.activeEffectPath.isNullOrBlank() && !faceStickerActive()
     }
   }
 
@@ -2180,13 +2380,97 @@ internal class NosmaiAndroidController(
     }
   }
 
+  fun prepareBeautyFilters(owner: NosmaiModuleEventSink, promise: Promise) {
+    runOnMain {
+      if (!ensureModuleOwner(owner, promise) || !ensureInitialized(promise)) return@runOnMain
+      if (!processing || !firstFrameDelivered || processingStopping ||
+          cleanupInProgress || hostPaused || cameraPaused) {
+        promise.resolve(false)
+        return@runOnMain
+      }
+      // Warming is independent of filter selection and must not stall the UI FIFO.
+      beautyPreparation.prepare { ready, error ->
+        if (!isModuleOwner(owner)) {
+          promise.resolve(false)
+        } else if (error != null) {
+          reject(
+            promise,
+            if (error is LinkageError) "E_SDK_UPGRADE_REQUIRED"
+            else NosmaiAndroidVisualEffects.ERROR_VISUAL_CONTROL,
+            "Unable to prepare native beauty resources",
+            error
+          )
+        } else {
+          promise.resolve(ready && processing && firstFrameDelivered &&
+            !processingStopping && !cleanupInProgress && !hostPaused && !cameraPaused)
+        }
+      }
+    }
+  }
+
+  fun isBeautyPrepared(owner: NosmaiModuleEventSink, promise: Promise) {
+    runOnMain {
+      if (!ensureModuleOwner(owner, promise)) return@runOnMain
+      promise.resolve(sdkInitialized && processing && firstFrameDelivered &&
+        !processingStopping && !cleanupInProgress && !hostPaused && !cameraPaused &&
+        beautyPreparation.isPrepared)
+    }
+  }
+
+  fun setBeautyVisible(owner: NosmaiModuleEventSink, visible: Boolean, promise: Promise) {
+    enqueueVisualMutation(owner, promise) { visualEffects.setBeautyVisible(visible) }
+  }
+
+  fun isBeautyVisible(owner: NosmaiModuleEventSink, promise: Promise) {
+    enqueueVisualQuery(owner, promise) { visualEffects.isBeautyVisible() }
+  }
+
+  fun applyContourHighlighter(
+    owner: NosmaiModuleEventSink, contour: Double, highlighter: Double, promise: Promise
+  ) {
+    val capability = if (contour == 0.0 && highlighter == 0.0)
+      NosmaiVisualCapability.NONE else NosmaiVisualCapability.BEAUTY
+    enqueueVisualMutation(owner, promise, capability) {
+      visualEffects.applyContourHighlighter(contour, highlighter)
+    }
+  }
+
+  fun applyFoundation(
+    owner: NosmaiModuleEventSink, coverage: Double,
+    red: Double, green: Double, blue: Double, promise: Promise
+  ) {
+    val capability = if (coverage == 0.0)
+      NosmaiVisualCapability.NONE else NosmaiVisualCapability.BEAUTY
+    enqueueVisualMutation(owner, promise, capability) {
+      visualEffects.applyFoundation(coverage, red, green, blue)
+    }
+  }
+
+  fun getMakeupColors(owner: NosmaiModuleEventSink, type: String, promise: Promise) {
+    enqueueVisualQuery(owner, promise) {
+      com.facebook.react.bridge.Arguments.makeNativeMap(visualEffects.getMakeupColors(type))
+    }
+  }
+
+  fun applyMakeupDefault(
+    owner: NosmaiModuleEventSink, type: String, style: String,
+    intensity: Double, promise: Promise
+  ) {
+    enqueueVisualMutation(owner, promise, NosmaiVisualCapability.BEAUTY) {
+      visualEffects.applyMakeupDefault(type, style, intensity)
+    }
+  }
+
   fun setBeautyValue(
     owner: NosmaiModuleEventSink,
     control: String,
     value: Double,
     promise: Promise
   ) {
-    enqueueVisualMutation(owner, promise, NosmaiVisualCapability.BEAUTY) {
+    val scopedRemoval = value == 0.0 && (control == "freckles" || control == "darkCircle")
+    val capability = if (scopedRemoval)
+      NosmaiVisualCapability.NONE else NosmaiVisualCapability.BEAUTY
+    enqueueVisualMutation(owner, promise, capability) {
       visualEffects.setBeautyValue(control, value)
     }
   }
@@ -2305,6 +2589,43 @@ internal class NosmaiAndroidController(
   fun isEyeColorActive(owner: NosmaiModuleEventSink, promise: Promise) {
     enqueueVisualQuery(owner, promise) {
       visualEffects.isEyeColorActive()
+    }
+  }
+
+  // Hair colouring: a built-in beauty effect driven by the SDK's hair
+  // segmentation (own native worker). Same queue discipline as eye colour.
+  fun setHairColor(
+    owner: NosmaiModuleEventSink,
+    red: Double,
+    green: Double,
+    blue: Double,
+    intensity: Double,
+    promise: Promise
+  ) {
+    enqueueVisualMutation(owner, promise, NosmaiVisualCapability.BEAUTY) {
+      visualEffects.setHairColor(red, green, blue, intensity)
+    }
+  }
+
+  fun setHairColorIntensity(
+    owner: NosmaiModuleEventSink,
+    intensity: Double,
+    promise: Promise
+  ) {
+    enqueueVisualMutation(owner, promise, NosmaiVisualCapability.BEAUTY) {
+      visualEffects.setHairColorIntensity(intensity)
+    }
+  }
+
+  fun removeHairColor(owner: NosmaiModuleEventSink, promise: Promise) {
+    enqueueVisualMutation(owner, promise) {
+      visualEffects.removeHairColor()
+    }
+  }
+
+  fun isHairColorActive(owner: NosmaiModuleEventSink, promise: Promise) {
+    enqueueVisualQuery(owner, promise) {
+      visualEffects.isHairColorActive()
     }
   }
 
@@ -2457,6 +2778,7 @@ internal class NosmaiAndroidController(
     }
     if (processing) {
       if (!startCameraNow) {
+        beautyPreparation.invalidate()
         cameraPaused = true
         promise?.resolve(null)
         return
@@ -3487,6 +3809,7 @@ internal class NosmaiAndroidController(
   }
 
   private fun initializePreviewPipeline(preview: NosmaiPreviewView) {
+    beautyPreparation.invalidate()
     preview.initializePipeline()
     if (hostPaused || cameraPaused) {
       preview.onPause()
@@ -4039,6 +4362,7 @@ internal class NosmaiAndroidController(
     result: Any?,
     fencePreview: NosmaiPreviewView? = previewView
   ) {
+    beautyPreparation.invalidate()
     var settled = false
     val timeout = Runnable {
       if (settled) return@Runnable
@@ -4226,6 +4550,7 @@ internal class NosmaiAndroidController(
   private fun isEffectPipelineEmpty(state: NosmaiPipelineState): Boolean =
     state.activeFilterPath.isNullOrBlank() &&
       state.activeEffectPath.isNullOrBlank() &&
+      !faceStickerActive() &&
       state.activeBackgroundPackagePath.isNullOrBlank() &&
       state.activeBackgroundConfig == null &&
       !runCatching { NosmaiEffectsEngine.hasActiveBeautyFilters() }
@@ -4290,6 +4615,7 @@ internal class NosmaiAndroidController(
   }
 
   private fun cleanupSession(after: ((List<Throwable>) -> Unit)? = null) {
+    beautyPreparation.invalidate()
     if (mediaRecorder.isBusy()) {
       stopRecordingForTeardown("Recording was interrupted by session cleanup") {
         cleanupSession(after)
@@ -4379,7 +4705,10 @@ internal class NosmaiAndroidController(
               }
               val nativeTeardownFailureCountBefore = failures.size
               cameraStopSettlementFailure?.let(failures::add)
-              runCatching { NosmaiSDK.stopProcessing() }
+              runCatching {
+            beautyPreparation.invalidate()
+            NosmaiSDK.stopProcessing()
+          }
                 .exceptionOrNull()?.let(failures::add)
               runCatching { retiredPreview?.setOnOesFrameProcessedListener(null) }
                 .exceptionOrNull()?.let(failures::add)
@@ -4457,6 +4786,7 @@ internal class NosmaiAndroidController(
         moduleSink = nextModule
       } else {
         lifecycleListener = null
+        beautyPreparation.invalidate()
         hostPaused = true
         moduleSink = null
       }
@@ -4535,6 +4865,7 @@ internal class NosmaiAndroidController(
       mediaCapture.shutdown()
       mediaGallery.shutdown()
       mediaRecorder.shutdown()
+      beautyPreparation.shutdown()
       visualEffects.shutdown()
       cameraExecutor.shutdown()
     }
@@ -4576,6 +4907,7 @@ internal class NosmaiAndroidController(
   }
 
   private fun tryStopProcessing() {
+    beautyPreparation.invalidate()
     runCatching { NosmaiSDK.stopProcessing() }
   }
 
@@ -5371,6 +5703,7 @@ internal class NosmaiAndroidController(
   private fun handleHostPause(ownerGeneration: Long) {
     runOnMain {
       if (ownerGeneration != contextGeneration) return@runOnMain
+      beautyPreparation.invalidate()
       hostPaused = true
       if (cleanupInProgress) return@runOnMain
       frameStream.stop()
@@ -5543,10 +5876,22 @@ internal class NosmaiAndroidController(
     private const val ERROR_PACKAGE_PATH = "E_INVALID_PACKAGE_PATH"
     private const val ERROR_EFFECT_APPLY = "E_EFFECT_APPLY"
     private const val ERROR_EFFECT_CLEAR = "E_EFFECT_CLEAR"
+    private const val ERROR_FACE_STICKER_RESOURCE = "E_FACE_STICKER_RESOURCE"
+    // JS anchor names → SDK anchors. Names, never ordinals, cross the bridge.
+    private val FACE_STICKER_ANCHORS = mapOf(
+      "center" to NosmaiEffects.FaceStickerAnchor.CENTER,
+      "forehead" to NosmaiEffects.FaceStickerAnchor.FOREHEAD,
+      "aboveHead" to NosmaiEffects.FaceStickerAnchor.ABOVE_HEAD,
+      "leftEye" to NosmaiEffects.FaceStickerAnchor.LEFT_EYE,
+      "rightEye" to NosmaiEffects.FaceStickerAnchor.RIGHT_EYE,
+      "eyes" to NosmaiEffects.FaceStickerAnchor.EYES,
+      "nose" to NosmaiEffects.FaceStickerAnchor.NOSE,
+      "mouth" to NosmaiEffects.FaceStickerAnchor.MOUTH,
+      "chin" to NosmaiEffects.FaceStickerAnchor.CHIN
+    )
     private const val ERROR_EFFECT_STATE = "E_EFFECT_STATE"
     private const val ERROR_EFFECT_PARAMETER = "E_EFFECT_PARAMETER"
     private const val ERROR_LOCAL_CATALOG = "E_LOCAL_CATALOG"
-    private const val ERROR_DEBUG_FILTERS = "E_DEBUG_FILTERS"
     private const val ERROR_OPERATION_CANCELLED = "E_OPERATION_CANCELLED"
     private const val ERROR_CLEANUP = "E_CLEANUP"
     private const val ERROR_DESTROYED = "E_SESSION_DESTROYED"

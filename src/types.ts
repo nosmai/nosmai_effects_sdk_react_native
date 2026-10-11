@@ -158,7 +158,9 @@ type NosmaiColoredMakeupConfiguration<
 > = {
   type: TType;
   style: TStyle;
-  color: NosmaiRgbColor;
+  /** Omit to restore the native finish default. Alpha is ignored. */
+  color?: NosmaiRgbColor;
+  /** Lipstick/blusher 0..2; other makeup 0..1. */
   intensity?: number;
 };
 
@@ -172,6 +174,27 @@ export type NosmaiMakeupConfiguration =
       style: NosmaiEyelashStyle;
       intensity?: number;
     };
+
+export interface NosmaiMakeupColor extends NosmaiRgbColor {
+  name: string;
+}
+
+export type NosmaiFoundationShade =
+  'ivory' | 'beige' | 'sand' | 'honey' | 'caramel' | 'mocha' | 'deep';
+
+export interface NosmaiFoundationConfiguration {
+  shade?: NosmaiFoundationShade;
+  /** Overrides the preset shade; alpha is ignored. */
+  color?: NosmaiRgbColor;
+  /** Coverage 0..1; defaults to 0.5. */
+  coverage?: number;
+}
+
+export interface NosmaiContourHighlighterConfiguration {
+  /** Independent 0..2 strengths; omitted controls default to zero. */
+  contour?: number;
+  highlighter?: number;
+}
 
 /** Stable IDs shared by Android and iOS native mesh-warp engines. */
 export type NosmaiReshapeType =
@@ -189,6 +212,49 @@ export type NosmaiReshapeType =
 export interface NosmaiWhiteBalance {
   temperature: number;
   tint: number;
+}
+
+/**
+ * Landmark a face sticker is measured from. Every value is a tracked point,
+ * so a `leftEye` sticker lands on the eye of a wide face and a narrow face
+ * alike. Left and right are the SUBJECT's. The landmark indices behind these
+ * names live inside the native engine.
+ */
+export type NosmaiFaceStickerAnchor =
+  | 'center'
+  | 'forehead'
+  | 'aboveHead'
+  | 'leftEye'
+  | 'rightEye'
+  | 'eyes'
+  | 'nose'
+  | 'mouth'
+  | 'chin';
+
+/**
+ * Where the live sticker sits. Offsets are fractions of face width/height
+ * measured from the anchor (positive `offsetY` is toward the forehead), so
+ * they scale with the face. `scale` is the sticker width as a multiple of face
+ * width; `0` (the default) uses the anchor's own default size.
+ */
+export interface NosmaiFaceStickerPlacement {
+  /** Pass the anchor the sticker was applied with; the offset is measured from it. */
+  anchor: NosmaiFaceStickerAnchor;
+  offsetX?: number;
+  offsetY?: number;
+  scale?: number;
+  rotationDeg?: number;
+  opacity?: number;
+}
+
+export interface NosmaiFaceStickerConfiguration extends Omit<
+  NosmaiFaceStickerPlacement,
+  'anchor'
+> {
+  /** Absolute local `file://` URI of a PNG, JPEG or GIF; a GIF animates. */
+  uri: string;
+  /** Defaults to `center`. */
+  anchor?: NosmaiFaceStickerAnchor;
 }
 
 export interface NosmaiHsbAdjustment {
@@ -215,6 +281,17 @@ export interface NosmaiActiveEffects {
   hasBeautyEffect: boolean;
   hasBuiltInBeauty: boolean;
   hasManualBackground: boolean;
+  /**
+   * True while a built-in face sticker occupies the AR slot. The sticker
+   * leaves `activeEffectPath` undefined even though the slot is taken, so
+   * check this flag rather than the path.
+   */
+  isFaceStickerActive: boolean;
+  /**
+   * True while built-in hair colouring is enabled. A beauty effect: it rides
+   * the built-in beauty chain and never touches the AR slot.
+   */
+  isHairColorActive: boolean;
   activeFilter?: NosmaiFilter;
   activeEffect?: NosmaiFilter;
 }
@@ -413,11 +490,6 @@ export interface NosmaiCameraApi {
    * returns every supported package type.
    */
   getLocalFilters(packageType?: PackageType): Promise<NosmaiFilter[]>;
-  /**
-   * Discovers loose development `.nosmai` packages bundled under
-   * `assets/filters`. Production applications should use getLocalFilters.
-   */
-  getDebugFilters(packageType?: PackageType): Promise<NosmaiFilter[]>;
   isCloudFilterEnabled(): Promise<boolean>;
   getCloudFilters(
     query?: NosmaiCloudFilterQuery
@@ -439,8 +511,34 @@ export interface NosmaiCameraApi {
   isAdvancedFiltersEnabled(): Promise<boolean>;
   setSkinSmoothing(level: number): Promise<void>;
   setSkinWhitening(level: number): Promise<void>;
+  /** Compatibility control: sets contour and highlighter together, 0..1. */
+  setContourHighlighter(level: number): Promise<void>;
+  /** Compatibility alias for applyDarkCircleCorrector, 0..1. */
+  setDarkCircleCorrector(level: number): Promise<void>;
   setTeethWhitening(level: number): Promise<void>;
-  /** Clears skin beauty, makeup, reshaping, and eye color only. */
+  /** Warm shared renderer resources without applying effects; call after onReady.
+   * Android also waits for model setup/fallback; iOS model warm-up stays async. */
+  prepareBeautyFilters(): Promise<boolean>;
+  /** Last successful preparation in the current session; false during/reset/failure. */
+  isBeautyPrepared(): Promise<boolean>;
+  /** Hide/show built-in beauty, retaining settings and AR/background packages. */
+  setBeautyVisible(visible: boolean): Promise<void>;
+  isBeautyVisible(): Promise<boolean>;
+  applyContourHighlighter(
+    configuration?: NosmaiContourHighlighterConfiguration
+  ): Promise<void>;
+  /** Approved XYZ marks; quantity 0..1 changes count, retaining mark opacity. */
+  applyFreckles(quantity: number): Promise<void>;
+  removeFreckles(): Promise<void>;
+  applyFoundation(configuration?: NosmaiFoundationConfiguration): Promise<void>;
+  removeFoundation(): Promise<void>;
+  applyDarkCircleCorrector(intensity: number): Promise<void>;
+  removeDarkCircleCorrector(): Promise<void>;
+  getLipstickColors(): Promise<NosmaiMakeupColor[]>;
+  getEyeshadowColors(): Promise<NosmaiMakeupColor[]>;
+  getBlusherColors(): Promise<NosmaiMakeupColor[]>;
+  getEyebrowColors(): Promise<NosmaiMakeupColor[]>;
+  /** Clears skin, complexion, makeup, reshaping, eye and hair color; retains color controls/packages. */
   clearBeauty(): Promise<void>;
   applyMakeup(configuration: NosmaiMakeupConfiguration): Promise<void>;
   setMakeupIntensity(
@@ -456,6 +554,10 @@ export interface NosmaiCameraApi {
   setEyeColorIntensity(intensity: number): Promise<void>;
   removeEyeColor(): Promise<void>;
   isEyeColorActive(): Promise<boolean>;
+  setHairColor(color: NosmaiRgbColor, intensity?: number): Promise<void>;
+  setHairColorIntensity(intensity: number): Promise<void>;
+  removeHairColor(): Promise<void>;
+  isHairColorActive(): Promise<boolean>;
 
   setBrightness(brightness: number): Promise<void>;
   setContrast(contrast: number): Promise<void>;
@@ -469,6 +571,20 @@ export interface NosmaiCameraApi {
 
   setBackground(configuration: NosmaiBackgroundConfiguration): Promise<void>;
   clearBackground(): Promise<void>;
+
+  /**
+   * Pins an image or animated GIF file to the tracked face. Shares the AR slot
+   * with `.nosmai` effects: applying one replaces the other, and built-in
+   * beauty is cleared as it is for an authored AR package.
+   */
+  setFaceSticker(
+    configuration: NosmaiFaceStickerConfiguration
+  ): Promise<boolean>;
+  /** Moves, resizes, rotates or fades the live sticker; never re-reads the file. */
+  setFaceStickerPlacement(placement: NosmaiFaceStickerPlacement): Promise<void>;
+  /** Removes the face sticker; resolves when no sticker is active. */
+  clearFaceSticker(): Promise<void>;
+  isFaceStickerActive(): Promise<boolean>;
 
   addActiveEffectsChangedListener(
     listener: (state: NosmaiActiveEffects) => void

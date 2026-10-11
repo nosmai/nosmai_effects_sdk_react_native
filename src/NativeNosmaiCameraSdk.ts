@@ -97,9 +97,6 @@ export interface Spec extends TurboModule {
   getLocalFilters(
     packageType: string | null
   ): Promise<CodegenTypes.UnsafeObject>;
-  getDebugFilters(
-    packageType: string | null
-  ): Promise<CodegenTypes.UnsafeObject>;
   isCloudFilterEnabled(): Promise<boolean>;
   getCloudFilters(
     packageType: string | null,
@@ -118,6 +115,23 @@ export interface Spec extends TurboModule {
   isBeautyEffectEnabled(): Promise<boolean>;
   isAdvancedFiltersEnabled(): Promise<boolean>;
   setBeautyValue(control: string, value: number): Promise<void>;
+  prepareBeautyFilters(): Promise<boolean>;
+  isBeautyPrepared(): Promise<boolean>;
+  setBeautyVisible(visible: boolean): Promise<void>;
+  isBeautyVisible(): Promise<boolean>;
+  applyContourHighlighter(contour: number, highlighter: number): Promise<void>;
+  applyFoundation(
+    coverage: number,
+    red: number,
+    green: number,
+    blue: number
+  ): Promise<void>;
+  getMakeupColors(makeupType: string): Promise<CodegenTypes.UnsafeObject>;
+  applyMakeupDefault(
+    makeupType: string,
+    style: string,
+    intensity: number
+  ): Promise<void>;
   clearBeauty(): Promise<void>;
   applyMakeup(
     makeupType: string,
@@ -142,6 +156,15 @@ export interface Spec extends TurboModule {
   setEyeColorIntensity(intensity: number): Promise<void>;
   removeEyeColor(): Promise<void>;
   isEyeColorActive(): Promise<boolean>;
+  setHairColor(
+    red: number,
+    green: number,
+    blue: number,
+    intensity: number
+  ): Promise<void>;
+  setHairColorIntensity(intensity: number): Promise<void>;
+  removeHairColor(): Promise<void>;
+  isHairColorActive(): Promise<boolean>;
   setColorAdjustment(
     control: string,
     value1: number,
@@ -159,6 +182,25 @@ export interface Spec extends TurboModule {
     blurStrength: number
   ): Promise<void>;
   clearBackground(): Promise<void>;
+  setFaceSticker(
+    resourceUri: string,
+    anchor: string,
+    offsetX: number,
+    offsetY: number,
+    scale: number,
+    rotationDeg: number,
+    opacity: number
+  ): Promise<boolean>;
+  setFaceStickerPlacement(
+    anchor: string,
+    offsetX: number,
+    offsetY: number,
+    scale: number,
+    rotationDeg: number,
+    opacity: number
+  ): Promise<void>;
+  clearFaceSticker(): Promise<void>;
+  isFaceStickerActive(): Promise<boolean>;
 
   readonly onActiveEffectsChanged: CodegenTypes.EventEmitter<CodegenTypes.UnsafeObject>;
   readonly onLicenseStatusChanged: CodegenTypes.EventEmitter<string>;
