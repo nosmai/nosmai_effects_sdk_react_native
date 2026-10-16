@@ -1,6 +1,6 @@
 {
   "name": "@nosmai/react-native-effects-sdk",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Official New Architecture React Native bindings for Nosmai Effects on Android and iOS.",
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/src/index.d.ts",

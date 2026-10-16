@@ -15,9 +15,9 @@ cloud, visual, light, and frame behavior.
 
 - For Android runtime checks, a physical `arm64-v8a` or `armeabi-v7a` device
   with developer options enabled and an authorized dual-ABI Nosmai Android SDK
-  3.0.6 AAR.
+  3.0.7 AAR.
 - For iOS builds, macOS/Xcode, CocoaPods, and authorized access to
-  `NosmaiCameraSDK ~> 3.0.6`.
+  `NosmaiCameraSDK 3.0.7`.
 - For iOS runtime checks, a physical arm64 iPhone running iOS 15 or newer.
 - A locally supplied development license key bound to the example application's
   platform identity. Enter it at runtime in the secure field; the example does
@@ -188,7 +188,7 @@ different and app-bound.
 - Android selects OES or YUV input according to device/runtime compatibility.
   Verify first-frame readiness, pause/resume, camera switching, and lifecycle
   behavior on every Android device family your app supports.
-- The Android 3.0.6 process core is retained across logical cleanup; reuse the
+- The Android 3.0.7 process core is retained across logical cleanup; reuse the
   same key within one process.
 - Cloud catalog/download/remove and the complete visual-control surface require
   an active licensed session and network access where applicable.
@@ -201,7 +201,7 @@ different and app-bound.
 
 ## Production beauty testing
 
-Use the native SDK 3.0.6 or newer AAR/pod/framework containing the production
+Use the native SDK 3.0.7 or newer AAR/pod/framework containing the production
 beauty APIs. In Visual controls, use the individual sliders for skin,
 freckles quantity, dark-circle correction, independent contour/highlighter,
 and foundation coverage with all seven approved shades. Makeup provides all

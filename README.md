@@ -7,7 +7,7 @@ local and cloud protected packages, beauty/makeup/reshape/eye-color controls,
 color/HSB adjustment, interactive camera games, and manual
 blur/color/image/video backgrounds.
 
-> Stable release: version `2.0.0` is the production React Native package for
+> Stable release: version `2.0.1` is the production React Native package for
 > the supported compatibility baseline below. Validate camera, effect, and
 > recording behavior on the physical device models targeted by your app.
 
@@ -21,9 +21,9 @@ blur/color/image/video backgrounds.
 | Architecture      | New Architecture only (TurboModule + Fabric); legacy architecture is not supported                    |
 | Android           | Effective RN minimum API 24; native SDK supports API 21; physical `arm64-v8a` or `armeabi-v7a` device |
 | iOS               | iOS 15+; physical arm64 iPhone or iPad                                                                |
-| Native Nosmai SDK | Android `3.0.6`; iOS `NosmaiCameraSDK 3.0.6`                                                          |
+| Native Nosmai SDK | Android `3.0.7`; iOS `NosmaiCameraSDK 3.0.7`                                                          |
 
-Version `2.0.0` targets Expo SDK 54, React Native 0.81.5, React 19.1, and the
+Version `2.0.1` targets Expo SDK 54, React Native 0.81.5, React 19.1, and the
 React Native New Architecture. The current iOS SDK framework is device-only,
 so bridge linking targets `generic/platform=iOS` rather than iOS Simulator.
 Generic Debug and Release compilation does not need an attached iPhone, but
@@ -103,7 +103,7 @@ yarn add @nosmai/react-native-effects-sdk
 ### Android native SDK
 
 The npm package does not contain Nosmai's proprietary AAR. Download the
-authorized Android `3.0.6` artifact and `SHA256SUMS` from the
+authorized Android `3.0.7` artifact and `SHA256SUMS` from the
 [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases),
 verify its checksum, and place exactly one copy at:
 
@@ -154,7 +154,7 @@ complete lifecycle on every Android device family supported by your app.
 
 ### iOS native SDK
 
-The podspec depends on `NosmaiCameraSDK ~> 3.0.6`; it does not vendor a
+The podspec depends on `NosmaiCameraSDK 3.0.7`; it does not vendor a
 framework. Install pods from the application:
 
 ```sh
@@ -239,7 +239,7 @@ function Preview({ licenseKey }: { licenseKey: string }) {
 Never commit, log, screenshot, or send a complete license key to analytics.
 Android and iOS applications normally use different app-bound keys.
 
-On the native SDK 3.0.6 compatibility line, `cleanup()` performs camera/preview/session teardown but
+On the native SDK 3.0.7 compatibility line, `cleanup()` performs camera/preview/session teardown but
 intentionally keeps the native process core initialized. The SDK's full cleanup
 currently leaves its `NosmaiCore` reinitialization guard stale. A later session
 in the same process must therefore use the same app-bound platform key;
@@ -516,7 +516,7 @@ backgrounds.
 
 ### Production complexion, colours, and readiness
 
-Use native SDK **3.0.6 or newer with the production beauty APIs** on both
+Use native SDK **3.0.7 or newer with the production beauty APIs** on both
 platforms. Update the Android AAR and iOS pod or local framework before running
 the example. This wrapper does not bundle native artifacts.
 

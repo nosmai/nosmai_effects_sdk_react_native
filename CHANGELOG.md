@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1 - 2026-10-16
+
+- Updated the Android and iOS native SDK baseline to Nosmai Effects SDK 3.0.7.
+- Improved native runtime performance, camera-frame lifecycle handling, and
+  overall stability.
+- Retained compatibility with the existing React Native public API and Android
+  `arm64-v8a` and `armeabi-v7a` support.
+
 ## 2.0.0 - 2026-10-12
 
 - Synced the production beauty APIs with Flutter: independent contour and

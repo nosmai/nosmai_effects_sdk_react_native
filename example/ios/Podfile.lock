@@ -8,15 +8,15 @@ PODS:
   - hermes-engine (0.81.5):
     - hermes-engine/Pre-built (= 0.81.5)
   - hermes-engine/Pre-built (0.81.5)
-  - NosmaiCameraSDK (3.0.6)
-  - NosmaiReactNativeCameraSdk (2.0.0):
+  - NosmaiCameraSDK (3.0.7)
+  - NosmaiReactNativeCameraSdk (2.0.1):
     - boost
     - DoubleConversion
     - fast_float
     - fmt
     - glog
     - hermes-engine
-    - NosmaiCameraSDK (~> 3.0.6)
+    - NosmaiCameraSDK (= 3.0.7)
     - RCT-Folly
     - RCT-Folly/Fabric
     - RCTRequired
@@ -2522,8 +2522,8 @@ SPEC CHECKSUMS:
   fmt: a40bb5bd0294ea969aaaba240a927bd33d878cdd
   glog: 5683914934d5b6e4240e497e0f4a3b42d1854183
   hermes-engine: 9f4dfe93326146a1c99eb535b1cb0b857a3cd172
-  NosmaiCameraSDK: e12999550865089ebf5c5809c52bbc05ffa3242b
-  NosmaiReactNativeCameraSdk: 6141e1659ad49f92852d9e0d61a69ec776eb66cb
+  NosmaiCameraSDK: b914cb19ea0f88faf537e726f0b09bfa20ba3bc7
+  NosmaiReactNativeCameraSdk: ba9adb40cd57b9c03d725db1afe5926b22642657
   RCT-Folly: 846fda9475e61ec7bcbf8a3fe81edfcaeb090669
   RCTDeprecation: 5eb1d2eeff5fb91151e8a8eef45b6c7658b6c897
   RCTRequired: cebcf9442fc296c9b89ac791dfd463021d9f6f23
